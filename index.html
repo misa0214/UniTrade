@@ -868,7 +868,7 @@ function finalizeLotteryDraw() {
     resetLotteryTime(); // 這裡會 saveState()（下面我也幫你改好）
     document.getElementById('draw-result').classList.add('hidden');
     document.getElementById('draw-placeholder').classList.remove('hidden');
-  }, 10000);
+  }, 60000);
 }
 
         function modLotteryTime(m) {
@@ -1109,5 +1109,6 @@ renderAll();
     </script>
 </body>
 </html>
+
 
 
