@@ -417,33 +417,27 @@
 
     <!-- Firebase SDKs -->
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+          // Import the functions you need from the SDKs you need
+          import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
+          import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-analytics.js";
+  // TODO: Add SDKs for Firebase products that you want to use
+  // https://firebase.google.com/docs/web/setup#available-libraries
 
-        // ==========================================
-        //  已填入你的 Firebase 配置 (来自截图)
-        // ==========================================
-        const firebaseConfig = {
-            apiKey: "AIzaSyD0tDOe3lCgrT0ANI087rlkigES_ivivFI",
-            authDomain: "pycamp-9d9bb.firebaseapp.com",
-            projectId: "pycamp-9d9bb",
-            storageBucket: "pycamp-9d9bb.firebasestorage.app",
-            messagingSenderId: "205817396545",
-            appId: "1:205817396545:web:6d1a48fba84c50b79f35c0",
-            measurementId: "G-HY0C949GMR"
-        };
-        
-        let app, auth, db;
-        try {
-            app = initializeApp(firebaseConfig);
-            auth = getAuth(app);
-            db = getFirestore(app);
-        } catch (e) {
-            console.error("Firebase Init Error:", e);
-        }
-        
-        const appId = 'final-game-station-v1';
+  // Your web app's Firebase configuration
+  // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+          const firebaseConfig = {
+              apiKey: "AIzaSyD0tDOe3lCgrT0ANIO87rlkigES_ivivfI",
+              authDomain: "pycamp-9d9bb.firebaseapp.com",
+              projectId: "pycamp-9d9bb",
+              storageBucket: "pycamp-9d9bb.firebasestorage.app",
+              messagingSenderId: "205817396545",
+              appId: "1:205817396545:web:6d1a48fba84c50b79f35c0",
+              measurementId: "G-HY0C949GMR"
+  };
+
+  // Initialize Firebase
+  const app = initializeApp(firebaseConfig);
+  const analytics = getAnalytics(app);
 
         const CONFIG = {
             adminPass: "8888",
@@ -820,3 +814,4 @@
     </script>
 </body>
 </html>
+
