@@ -37,7 +37,7 @@
             adminPass: "8888",
             lotteryDuration: 30,
             stockDuration: 35,
-            DATA_VERSION: "2.5" 
+            DATA_VERSION: "2.6" 
         };
 
         let state = {
@@ -54,44 +54,29 @@
 
         let networkOffset = 0; 
         let currentUser = null;
-        let timeSynced = false;
+        let isSyncing = false;
 
-        // --- 3. Robust Time Sync Function with Timeout ---
+        // --- 3. Better Time Sync (Non-blocking) ---
         async function syncTimeWithFirestore() {
-            if (!currentUser) return false;
+            if (!currentUser) return;
+            const statusEl = document.getElementById('connection-status');
             
-            return new Promise(async (resolve) => {
-                const statusEl = document.getElementById('connection-status');
-                statusEl.innerText = "CALIBRATING TIME...";
-
-                // 5 秒超時機制，防止卡死
-                const timeout = setTimeout(() => {
-                    console.warn("Time sync timed out. Using local clock.");
-                    statusEl.innerText = "TIME SYNC TIMEOUT (Using Local)";
-                    resolve(false);
-                }, 5000);
-
-                try {
-                    // 使用用戶唯一的 ID 避免寫入衝突
-                    const timeDoc = doc(db, 'artifacts', currentAppId, 'public', 'data', 'system', `timeCheck_${currentUser.uid}`);
-                    await setDoc(timeDoc, { t: serverTimestamp() });
-                    const snap = await getDoc(timeDoc);
-                    
-                    if (snap.exists() && snap.data().t) {
-                        const serverTime = snap.data().t.toMillis();
-                        const localTime = Date.now();
-                        networkOffset = serverTime - localTime;
-                        timeSynced = true;
-                        console.log("Time Sync Complete. Offset:", networkOffset, "ms");
-                    }
-                    clearTimeout(timeout);
-                    resolve(true);
-                } catch (e) {
-                    console.error("Time Sync Error:", e);
-                    clearTimeout(timeout);
-                    resolve(false);
+            try {
+                // 使用一個更通用的路徑進行心跳檢測
+                const timeDoc = doc(db, 'artifacts', currentAppId, 'public', 'data', 'gameState', 'heartbeat');
+                await setDoc(timeDoc, { lastCheck: serverTimestamp(), user: currentUser.uid }, { merge: true });
+                
+                const snap = await getDoc(timeDoc);
+                if (snap.exists() && snap.data().lastCheck) {
+                    const serverTime = snap.data().lastCheck.toMillis();
+                    const localTime = Date.now();
+                    networkOffset = serverTime - localTime;
+                    console.log("Time Calibrated. Offset:", networkOffset, "ms");
                 }
-            });
+            } catch (e) {
+                console.warn("Time Sync Failed (likely rules):", e.message);
+                // 失敗不中斷，直接進入下一步
+            }
         }
 
         window.getSyncedNow = () => Date.now() + networkOffset;
@@ -100,29 +85,24 @@
         async function init() {
             const statusEl = document.getElementById('connection-status');
             
-            // Step A: Auth MUST BE FIRST
             statusEl.innerText = "AUTHENTICATING...";
             try {
                 const cred = await signInAnonymously(auth);
                 currentUser = cred.user;
-                console.log("Authenticated as:", currentUser.uid);
+                console.log("Auth Success:", currentUser.uid);
+                
+                // 開始後台校準，不 await 它
+                syncTimeWithFirestore();
+                
+                // 直接啟動數據監聽
+                setupRealtimeListener();
             } catch (e) {
                 console.error("Auth Failed:", e);
-                statusEl.innerText = "AUTH ERROR: 請開啟 Firebase 匿名登錄";
-                return;
+                statusEl.innerText = "AUTH ERROR: 請確保 Firebase 啟用了匿名登錄";
             }
 
-            // Step B: Time Sync (Non-blocking enough with timeout)
-            await syncTimeWithFirestore();
-            
-            // Step C: Listen to State Changes
-            onAuthStateChanged(auth, async (user) => {
-                if (user) {
-                    currentUser = user;
-                    statusEl.innerText = `CONNECTED (${user.uid.substring(0,4)})`;
-                    statusEl.classList.remove('offline');
-                    setupRealtimeListener();
-                } else {
+            onAuthStateChanged(auth, (user) => {
+                if (!user) {
                     statusEl.innerText = "OFFLINE";
                     statusEl.classList.add('offline');
                 }
@@ -133,26 +113,30 @@
         }
 
         function setupRealtimeListener() {
-            if (!currentUser) return;
             const statusEl = document.getElementById('connection-status');
-            statusEl.innerText = "SYNCING DATA...";
+            statusEl.innerText = "CONNECTING DATABASE...";
 
-            // 修正路徑：artifacts/{id}/public/data/gameState/current (6 segments)
             const docRef = doc(db, 'artifacts', currentAppId, 'public', 'data', 'gameState', 'current');
 
             onSnapshot(docRef, (docSnap) => {
                 if (docSnap.exists()) {
                     state = docSnap.data();
                     renderAll();
-                    statusEl.innerText = `LIVE (Skew: ${Math.round(networkOffset)}ms)`;
+                    const skew = Math.abs(networkOffset) > 1000 ? ` (Skew: ${Math.round(networkOffset/1000)}s)` : '';
+                    statusEl.innerText = `LIVE: ${currentUser.uid.substring(0,4)}${skew}`;
+                    statusEl.classList.remove('offline');
                 } else {
-                    console.log("No remote state found. Initializing...");
+                    console.log("No remote state. Initializing...");
                     state.games = getInitialGames();
                     saveState();
                 }
             }, (error) => {
                 console.error("Firestore Error:", error);
-                statusEl.innerText = "DATABASE ERROR: 請檢查 Firestore 權限規則";
+                if (error.code === 'permission-denied') {
+                    statusEl.innerText = "ERROR: 權限被拒絕，請檢查 Firestore Rules";
+                } else {
+                    statusEl.innerText = "DATABASE ERROR: " + error.code;
+                }
             });
         }
 
