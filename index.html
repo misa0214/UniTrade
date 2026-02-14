@@ -12,9 +12,9 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-auth.js";
-        import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp, getDoc, enableIndexedDbPersistence } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
+        import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp, getDoc } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
 
-        // --- 1. Firebase 配置 ---
+        // --- 1. Firebase 配置 (已適配您的專案 pycamp-9d9bb) ---
         const firebaseConfig = {
             apiKey: "AIzaSyD0tDOe3lCgrT0ANIO87rlkigES_ivivfI",
             authDomain: "pycamp-9d9bb.firebaseapp.com",
@@ -25,7 +25,9 @@
             measurementId: "G-HY0C949GMR"
         };
 
-        const currentAppId = "pycamp_global_v2";
+        // 固定一個全域唯一的 App ID
+        const currentAppId = "pycamp_final_v1";
+
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
@@ -33,8 +35,8 @@
         // --- 2. 初始數據 ---
         const CONFIG = { adminPass: "8888" };
         let state = {
-            version: "2.9",
-            anno: "同步中...",
+            version: "2.9.1",
+            anno: "等待資料庫同步...",
             jackpot: 5000,
             lotteryEndTime: Date.now() + 1800000,
             stockEndTime: Date.now() + 2100000,
@@ -47,41 +49,41 @@
 
         window.getSyncedNow = () => Date.now() + networkOffset;
 
-        // --- 3. 核心初始化 (更強健的錯誤處理) ---
+        // --- 3. 核心初始化 ---
         async function init() {
             const statusEl = document.getElementById('connection-status');
             
             try {
-                // 離線數據支持 (可選)
-                try { await enableIndexedDbPersistence(db); } catch(e) {}
-
-                statusEl.innerText = "AUTH: 正在連線...";
+                statusEl.innerText = "AUTH: 連接中...";
                 const cred = await signInAnonymously(auth);
                 currentUser = cred.user;
-                
-                // 校準伺服器時間
-                statusEl.innerText = "TIME: 校準中...";
-                const timeDoc = doc(db, 'artifacts', currentAppId, 'public', 'data', 'system', 'time');
-                await setDoc(timeDoc, { t: serverTimestamp() });
-                const snap = await getDoc(timeDoc);
-                if (snap.exists()) networkOffset = snap.data().t.toMillis() - Date.now();
+                console.log("Logged in as:", currentUser.uid);
 
-                // 啟動監聽
-                statusEl.innerText = "DB: 獲取數據...";
+                // 校準伺服器時間 (非同步)
+                try {
+                    const timeDoc = doc(db, 'artifacts', currentAppId, 'public', 'data', 'system', 'time');
+                    await setDoc(timeDoc, { t: serverTimestamp() });
+                    const snap = await getDoc(timeDoc);
+                    if (snap.exists()) networkOffset = snap.data().t.toMillis() - Date.now();
+                } catch(e) { 
+                    console.warn("Time sync blocked by rules, using local."); 
+                }
+
+                // 啟動實時數據監聽
                 setupRealtimeSync();
 
             } catch (e) {
-                console.error(e);
-                statusEl.innerText = `ERROR: ${e.code || 'UNKNOWN'}`;
+                console.error("Init Error:", e);
+                statusEl.innerText = "ERROR: " + e.code;
                 statusEl.className = "error-text";
-                if(e.code === 'permission-denied') {
-                    statusEl.innerText = "ERROR: 請到 Firebase 修改 Rules!";
-                }
             }
         }
 
         function setupRealtimeSync() {
             const statusEl = document.getElementById('connection-status');
+            statusEl.innerText = "DB: 正在獲取...";
+
+            // 使用符合規則的 6 段路徑: artifacts / {appId} / public / data / {collection} / {docId}
             const docRef = doc(db, 'artifacts', currentAppId, 'public', 'data', 'gameState', 'current');
 
             onSnapshot(docRef, (docSnap) => {
@@ -91,11 +93,17 @@
                     statusEl.innerText = `LIVE: ${currentUser.uid.substring(0,4)}`;
                     statusEl.className = "live-text";
                 } else {
-                    saveState(); // 首次初始化
+                    statusEl.innerText = "DB: 初始化數據...";
+                    saveState();
                 }
             }, (err) => {
-                statusEl.innerText = `SYNC ERROR: ${err.code}`;
-                statusEl.className = "error-text";
+                console.error("Snapshot Error:", err);
+                if(err.code === 'permission-denied') {
+                    statusEl.innerText = "ERROR: 權限不足！請到 Firebase Console 修改 Rules";
+                    statusEl.className = "error-text";
+                } else {
+                    statusEl.innerText = "SYNC ERROR: " + err.code;
+                }
             });
         }
 
@@ -105,17 +113,18 @@
             try {
                 await setDoc(docRef, state, { merge: true });
             } catch (e) {
-                document.getElementById('connection-status').innerText = "WRITE FAILED";
+                console.error("Save Error:", e);
             }
         }
 
-        // --- 4. UI 與渲染 ---
+        // --- 4. UI 渲染 ---
         function renderAll() {
             document.getElementById('jackpot-display').innerText = state.jackpot.toLocaleString();
             document.getElementById('anno-text').innerText = state.anno;
             
             ['002', '004'].forEach(code => {
                 const s = state.stocks[code];
+                if(!s) return;
                 const total = s.w + s.l;
                 const rate = total === 0 ? 0 : Math.round((s.w / total) * 100);
                 document.getElementById(`win-${code}`).innerText = s.w;
@@ -126,14 +135,17 @@
             const container = document.getElementById('games-container');
             if(container) {
                 container.innerHTML = state.games.map(g => `
-                    <div class="glass-card p-4 rounded-lg border border-white/5 cursor-pointer" onclick="window.openGameDetails(${g.id})">
+                    <div class="glass-card p-4 rounded-lg border border-white/5 cursor-pointer hover:border-[#d4af37]/30" onclick="window.openGameDetails(${g.id})">
                         <div class="flex justify-between items-center mb-2">
                             <span class="text-[10px] font-bold px-2 py-0.5 bg-white/10 rounded">${g.type}</span>
                             <span class="text-[#d4af37] font-num">GAME ${g.id}</span>
                         </div>
                         <h3 class="font-bold text-white truncate">${g.name}</h3>
-                        <p class="text-[10px] text-gray-500 mt-2 h-4 overflow-hidden opacity-60">${g.desc}</p>
-                        <button onclick="event.stopPropagation(); window.editGame(${g.id})" class="admin-el mt-3 w-full bg-white/5 text-[9px] py-1 rounded">管理修改</button>
+                        <div class="flex justify-between items-center mt-3 pt-3 border-t border-white/5">
+                            <span class="text-[10px] text-gray-500">Entry Fee</span>
+                            <span class="text-[#d4af37] font-num text-lg">${g.cost}</span>
+                        </div>
+                        <button onclick="event.stopPropagation(); window.editGame(${g.id})" class="admin-el mt-3 w-full bg-white/5 text-[9px] py-1 rounded">修改</button>
                     </div>
                 `).join('');
             }
@@ -142,8 +154,7 @@
         function startLoop() {
             setInterval(() => {
                 const now = window.getSyncedNow(); 
-                const lDiff = state.lotteryEndTime - now;
-                document.getElementById('timer-display').innerText = formatTime(lDiff);
+                document.getElementById('timer-display').innerText = formatTime(state.lotteryEndTime - now);
                 const sDiff = state.stockEndTime - now;
                 const sStr = sDiff <= 0 ? "SETTLED" : formatTime(sDiff);
                 document.querySelectorAll('.stock-shared-timer').forEach(el => el.innerText = sStr);
@@ -156,7 +167,7 @@
             return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
         }
 
-        // 導出函數到全域
+        // 導出全局函數
         window.openGameDetails = (id) => {
             const g = state.games.find(x => x.id === id);
             if(!g) return;
@@ -179,9 +190,9 @@
             if(fee) { g.cost = fee; saveState(); }
         };
         window.attemptLogin = () => {
-            if(prompt("請輸入管理金鑰:") === CONFIG.adminPass) { 
+            if(prompt("KEY:") === CONFIG.adminPass) { 
                 document.body.classList.add('is-admin'); 
-                alert("已切換為管理員模式");
+                alert("管理員模式已啟動");
             }
         };
 
@@ -190,37 +201,36 @@
                 { id: 1, type: 'PVP', name: '石頭剪刀布大師', desc: '不留餘牌，平局扣費。', perfect: '比分 5:1' },
                 { id: 2, type: 'PVE', name: '雙峰塔硬幣', desc: '拿走最後一枚者勝。', perfect: '贏過 NPC' },
                 { id: 3, type: 'PVE', name: '拋水瓶挑戰', desc: '限時1分鐘，穩定立瓶。', perfect: '連中 5 次' },
-                { id: 10, type: 'PVP', name: '諸葛亮兵法', desc: '兵力分配，佔領三城。', perfect: '3:0 佔領' }
+                { id: 4, type: 'PVP', name: '盲人打擊', desc: '蒙眼擊中對手得分。', perfect: '3:0 完勝' },
+                { id: 5, type: 'SOLO', name: '紅繩陣特工', desc: '穿越紅繩不響鈴。', perfect: '一次不失誤' },
+                { id: 10, type: 'PVP', name: '諸葛亮兵法', desc: '分配兵力佔領三城。', perfect: '3:0 佔領' }
             ];
         }
 
         init();
         startLoop();
-        window.c = 0;
     </script>
 
     <style>
         :root { --gold: #d4af37; --bg: #050505; }
-        body { background: var(--bg); color: #eee; font-family: 'Noto Serif SC', serif; -webkit-font-smoothing: antialiased; }
+        body { background: var(--bg); color: #eee; font-family: 'Noto Serif SC', serif; }
         .font-num { font-family: 'Oswald', sans-serif; }
-        .glass-card { background: rgba(30,30,30,0.6); backdrop-filter: blur(12px); border-radius: 12px; }
+        .glass-card { background: rgba(30,30,30,0.8); backdrop-filter: blur(10px); }
         .dashboard-card { background: #111; border: 1px solid rgba(212,175,55,0.15); box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
         body:not(.is-admin) .admin-el { display: none !important; }
         #connection-status { position: fixed; bottom: 10px; left: 10px; font-size: 10px; font-family: monospace; padding: 2px 8px; border-radius: 4px; background: rgba(0,0,0,0.7); z-index: 1000; }
-        .live-text { color: #4ade80; text-shadow: 0 0 5px #4ade8055; }
-        .error-text { color: #ff4444; font-weight: bold; animation: blink 1s infinite; }
-        @keyframes blink { 50% { opacity: 0.5; } }
-        .modal-open #game-modal { display: flex; opacity: 1; }
-        .modal-closed #game-modal { display: none; opacity: 0; }
-        .settle-flash { border-color: var(--gold); animation: pulse 1.5s infinite; }
-        @keyframes pulse { 50% { border-color: transparent; } }
+        .live-text { color: #4ade80; }
+        .error-text { color: #ff4444; font-weight: bold; animation: pulse 1s infinite; }
+        @keyframes pulse { 50% { opacity: 0.5; } }
+        .modal-open #game-modal { display: flex; }
+        .modal-closed #game-modal { display: none; }
     </style>
 </head>
 <body class="h-screen flex flex-col overflow-hidden modal-closed" id="app-body">
 
     <header class="h-16 px-6 flex justify-between items-center border-b border-white/5 bg-black z-50">
-        <div class="flex items-center gap-2 cursor-pointer" onclick="window.c++; if(window.c>=5) window.attemptLogin()">
-            <i class="fa-solid fa-coins text-[#d4af37] text-xl"></i>
+        <div class="flex items-center gap-2 cursor-pointer" onclick="window.attemptLogin()">
+            <i class="fa-solid fa-coins text-[#d4af37]"></i>
             <h1 class="text-lg font-bold font-num tracking-wider">初火錢莊</h1>
         </div>
         <nav class="flex gap-6 text-xs font-bold uppercase tracking-widest">
@@ -231,7 +241,6 @@
     </header>
 
     <main class="flex-1 relative p-4 overflow-y-auto">
-        <!-- 監控頁面 -->
         <section id="view-dashboard">
             <div class="bg-black/60 p-3 mb-6 text-sm text-[#d4af37] border border-[#d4af37]/10 rounded flex items-center gap-3">
                 <span class="animate-pulse text-xs">●</span>
@@ -241,54 +250,28 @@
             <div class="max-w-4xl mx-auto space-y-6">
                 <div class="dashboard-card rounded-2xl p-8 text-center relative overflow-hidden">
                     <div class="absolute top-0 left-0 w-full h-1 bg-[#d4af37]"></div>
-                    <p class="text-[10px] text-[#d4af37] tracking-[0.5em] mb-2">CURRENT JACKPOT</p>
+                    <p class="text-[10px] text-[#d4af37] tracking-[0.5em] mb-2 uppercase">Current Jackpot</p>
                     <span class="text-5xl font-black font-num text-white tracking-tighter" id="jackpot-display">--</span>
                     <div class="mt-8 flex justify-between items-end border-t border-white/5 pt-4">
-                        <div class="text-left">
-                            <p class="text-[9px] text-gray-500 mb-1">STATUS</p>
-                            <span id="lottery-status-badge" class="text-xs font-bold text-gray-300">--</span>
-                        </div>
-                        <div class="text-right">
-                            <p class="text-[9px] text-gray-500 mb-1">DRAW IN</p>
-                            <span id="timer-display" class="font-num text-2xl text-white">--:--</span>
-                        </div>
+                        <div class="text-left text-xs font-bold text-gray-300">STATUS: WAITING</div>
+                        <div class="text-right text-2xl font-num text-white" id="timer-display">--:--</div>
                     </div>
                 </div>
 
                 <div class="grid grid-cols-2 gap-4">
-                    <!-- 002 -->
                     <div id="stock-002-card" class="dashboard-card rounded-xl p-5">
-                        <div class="flex justify-between items-start">
-                            <span class="text-xl font-num font-black italic">002</span>
-                            <span id="rate-002" class="text-xl font-bold text-[#d4af37] font-num">--</span>
-                        </div>
-                        <div class="grid grid-cols-2 gap-4 mt-6 text-center">
-                            <div class="bg-green-500/5 p-2 rounded">
-                                <p class="text-[8px] text-green-500 font-bold">WIN</p>
-                                <p id="win-002" class="font-num text-lg">0</p>
-                            </div>
-                            <div class="bg-red-500/5 p-2 rounded">
-                                <p class="text-[8px] text-red-500 font-bold">LOSS</p>
-                                <p id="loss-002" class="font-num text-lg">0</p>
-                            </div>
+                        <div class="flex justify-between font-num"><span>002</span><span id="rate-002" class="text-[#d4af37]">--</span></div>
+                        <div class="grid grid-cols-2 gap-2 mt-4 text-center">
+                            <div class="bg-white/5 p-2 rounded"><p class="text-[8px] text-green-500">WIN</p><p id="win-002" class="font-num">0</p></div>
+                            <div class="bg-white/5 p-2 rounded"><p class="text-[8px] text-red-500">LOSS</p><p id="loss-002" class="font-num">0</p></div>
                         </div>
                         <p class="stock-shared-timer text-center text-[10px] text-gray-600 mt-4 font-num tracking-widest">--:--</p>
                     </div>
-                    <!-- 004 -->
                     <div id="stock-004-card" class="dashboard-card rounded-xl p-5">
-                        <div class="flex justify-between items-start">
-                            <span class="text-xl font-num font-black italic">004</span>
-                            <span id="rate-004" class="text-xl font-bold text-[#d4af37] font-num">--</span>
-                        </div>
-                        <div class="grid grid-cols-2 gap-4 mt-6 text-center">
-                            <div class="bg-green-500/5 p-2 rounded">
-                                <p class="text-[8px] text-green-500 font-bold">WIN</p>
-                                <p id="win-004" class="font-num text-lg">0</p>
-                            </div>
-                            <div class="bg-red-500/5 p-2 rounded">
-                                <p class="text-[8px] text-red-500 font-bold">LOSS</p>
-                                <p id="loss-004" class="font-num text-lg">0</p>
-                            </div>
+                        <div class="flex justify-between font-num"><span>004</span><span id="rate-004" class="text-[#d4af37]">--</span></div>
+                        <div class="grid grid-cols-2 gap-2 mt-4 text-center">
+                            <div class="bg-white/5 p-2 rounded"><p class="text-[8px] text-green-500">WIN</p><p id="win-004" class="font-num">0</p></div>
+                            <div class="bg-white/5 p-2 rounded"><p class="text-[8px] text-red-500">LOSS</p><p id="loss-004" class="font-num">0</p></div>
                         </div>
                         <p class="stock-shared-timer text-center text-[10px] text-gray-600 mt-4 font-num tracking-widest">--:--</p>
                     </div>
@@ -296,28 +279,25 @@
             </div>
         </section>
 
-        <!-- 遊戲頁面 -->
         <section id="view-games" style="display:none">
             <div id="games-container" class="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-4 pb-20"></div>
         </section>
     </main>
 
-    <!-- 詳情 Modal -->
     <div id="game-modal" class="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center p-4">
         <div class="bg-[#111] border border-[#d4af37]/30 w-full max-w-md rounded-2xl p-6 relative">
             <button onclick="window.closeGameDetails()" class="absolute top-4 right-4 text-gray-500 hover:text-white"><i class="fa-solid fa-xmark text-xl"></i></button>
-            <h2 id="modal-title" class="text-2xl font-bold text-white mb-6 pr-8"></h2>
-            <div class="space-y-6">
-                <div><p class="text-[10px] text-[#d4af37] font-bold tracking-widest mb-1 uppercase">Rule Description</p><p id="modal-desc" class="text-sm text-gray-300 leading-relaxed whitespace-pre-line"></p></div>
-                <div class="bg-green-900/20 border border-green-500/20 p-4 rounded-xl">
-                    <p class="text-[10px] text-green-500 font-bold tracking-widest mb-1 uppercase">Perfect Win Condition</p>
-                    <p id="modal-perfect" class="text-sm text-green-200 font-bold"></p>
+            <h2 id="modal-title" class="text-2xl font-bold text-white mb-6"></h2>
+            <div class="space-y-4">
+                <div><p class="text-[10px] text-[#d4af37] font-bold uppercase tracking-widest">Rules</p><p id="modal-desc" class="text-sm text-gray-300 leading-relaxed whitespace-pre-line"></p></div>
+                <div class="bg-green-900/20 p-4 rounded-xl border border-green-500/20">
+                    <p class="text-[10px] text-green-500 font-bold uppercase tracking-widest">Perfect Win</p>
+                    <p id="modal-perfect" class="text-sm text-green-200"></p>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- 管理控制台 -->
     <footer class="admin-el fixed bottom-0 w-full bg-black p-4 border-t border-[#d4af37]/40 grid grid-cols-3 gap-2 z-50">
         <button onclick="window.modLotteryTime(5)" class="bg-gray-900 py-3 text-[10px] rounded border border-white/5">+5m</button>
         <button onclick="window.modStock('002','w',1)" class="bg-green-900/20 py-3 text-[10px] rounded border border-green-500/20">002 WIN</button>
