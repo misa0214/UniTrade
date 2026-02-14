@@ -44,6 +44,8 @@
             DATA_VERSION: "2.3"
         };
 
+        let networkOffset = 0; // Local Date.now() vs Global UTC Time
+
         const DEFAULT_STATE = {
             version: CONFIG.DATA_VERSION,
             anno: "初火钱庄交易系统已上线，请各位主帅前往各大站点进行博弈。",
@@ -71,11 +73,30 @@
         let state = JSON.parse(JSON.stringify(DEFAULT_STATE));
         let currentUser = null;
 
+        // --- Synced Now Helper ---
+        window.getSyncedNow = () => Date.now() + networkOffset;
+
         // --- Functions ---
 
         async function init() {
-            // Handle Auth
             const statusEl = document.getElementById('connection-status');
+            
+            // Step 1: Sync Time with External API to fix "Clock Sync" issues
+            try {
+                statusEl.innerText = "SYNCING TIME...";
+                const start = Date.now();
+                const resp = await fetch('https://worldtimeapi.org/api/timezone/Etc/UTC');
+                const data = await resp.json();
+                const globalNow = new Date(data.datetime).getTime();
+                // Network latency adjustment: assume half of the RTT
+                const rtt = Date.now() - start;
+                networkOffset = globalNow - (start + rtt/2);
+                console.log("Time synced. Offset:", networkOffset, "ms");
+            } catch (e) {
+                console.warn("Time sync failed, falling back to local clock.", e);
+            }
+
+            // Step 2: Handle Auth
             try {
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
@@ -235,7 +256,7 @@
 
         function startLoop() {
             setInterval(() => {
-                const now = Date.now();
+                const now = window.getSyncedNow(); // Use synced time instead of Date.now()
                 let lDiff = state.lotteryEndTime - now;
                 const lStatusEl = document.getElementById('lottery-status-badge');
                 const lTimerEl = document.getElementById('timer-display');
@@ -357,11 +378,11 @@
         };
 
         window.modLotteryTime = (m) => { state.lotteryEndTime += m * 60000; saveState(); };
-        window.resetLotteryTime = () => { state.lotteryEndTime = Date.now() + CONFIG.lotteryDuration * 60000; state.lotteryState='OPEN'; saveState(); };
+        window.resetLotteryTime = () => { state.lotteryEndTime = window.getSyncedNow() + CONFIG.lotteryDuration * 60000; state.lotteryState='OPEN'; saveState(); };
         window.modStockTime = (m) => { state.stockEndTime += m * 60000; saveState(); };
         window.resetStockTime = () => {
             if(confirm('⚠️ 確定重置股票週期嗎？\n這將清空所有 002/004 的勝負場數！')) {
-                state.stockEndTime = Date.now() + CONFIG.stockDuration * 60000; 
+                state.stockEndTime = window.getSyncedNow() + CONFIG.stockDuration * 60000; 
                 state.stockState='TRADING'; 
                 state.stocks = { '002': { w: 0, l: 0 }, '004': { w: 0, l: 0 } };
                 saveState();
