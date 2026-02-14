@@ -10,13 +10,11 @@
     
     <!-- Unified Script Module for Firebase and Game Logic -->
     <script type="module">
-        // Import the functions you need from the SDKs you need
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
-        import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-analytics.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-auth.js";
-        import { getFirestore, doc, onSnapshot, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-auth.js";
+        import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp, getDoc } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
 
-        // Your web app's Firebase configuration
+        // --- 1. Firebase Configuration ---
         const userConfig = {
             apiKey: "AIzaSyD0tDOe3lCgrT0ANIO87rlkigES_ivivfI",
             authDomain: "pycamp-9d9bb.firebaseapp.com",
@@ -28,134 +26,120 @@
         };
 
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : userConfig;
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-game-room';
+        const currentAppId = typeof __app_id !== 'undefined' ? __app_id : 'pycamp-game-001';
 
-        // Initialize Firebase
         const app = initializeApp(firebaseConfig);
-        const analytics = getAnalytics(app);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // --- Game Logic Constants & State ---
+        // --- 2. Constants & State ---
         const CONFIG = {
             adminPass: "8888",
             lotteryDuration: 30,
             stockDuration: 35,
-            DATA_VERSION: "2.3"
+            DATA_VERSION: "2.4" // Bumped version
         };
 
-        let networkOffset = 0; // Local Date.now() vs Global UTC Time
-
-        const DEFAULT_STATE = {
+        let state = {
             version: CONFIG.DATA_VERSION,
-            anno: "初火钱庄交易系统已上线，请各位主帅前往各大站点进行博弈。",
+            anno: "系統正在啟動...",
             jackpot: 5000,
-            lotteryEndTime: Date.now() + CONFIG.lotteryDuration * 60000,
-            stockEndTime: Date.now() + CONFIG.stockDuration * 60000,
+            lotteryEndTime: Date.now() + 1800000,
+            stockEndTime: Date.now() + 2100000,
             lotteryState: 'OPEN', 
             stockState: 'TRADING',
             stocks: { '002': { w: 0, l: 0 }, '004': { w: 0, l: 0 } },
-            games: [
-                { id: 1, type: 'PVP', name: '重生之變成石頭剪刀布大師卻因為平局破產這檔事', cost: '動態', location: '待定', desc: '1. 基礎規則：至少6人參與。每隊發6張卡（2石2剪2布）。\n2. 流程：嚴格進行6輪，卡片必須用完，不可保留。每輪結算後公開棄牌。\n3. 死鎖與懸賞：若平局，雙方各扣除50道（場地費），本輪獎金（150）不發，直接注入懸賞池。下一輪贏家通吃。\n4. 最終審判：若第6輪依然平局，懸賞池被系統強制回收，無人能得。', perfect: '比分 5:1 或 6:0 (抽獎x1)' },
-                { id: 2, type: 'PVE', name: '關於雙峰塔不對等我打算開飛機把雙峰塔撞了', cost: '200', location: '待定', desc: '1. 玩法：桌上有兩堆硬幣（左11，右18）。\n2. 操作：單取（拿走一堆中任意數量）或 雙取（兩堆同時拿走相同數量）。\n3. 勝利：拿走桌上最後一枚硬幣者勝。\n4. 付費玩法：支付200可搶先手或指定先手。', perfect: '不買Add-on贏過Committee (抽獎x1)' },
-                { id: 3, type: 'PVE', name: '關於我轉生變成水瓶還要被扔這檔事', cost: '200', location: '待定', desc: '1. 玩法：拋水瓶，旋轉一圈後穩穩站立。\n2. 勝利：限時1分鐘，成功次數多者勝；或競速模式先成功5次者勝。\n3. Add-on：150道讓NPC需成功7次；300道讓NPC需連續成功5次。', perfect: '不買Add-on贏過Committee (抽獎x1)' },
-                { id: 4, type: 'PVP', name: '重生之我變成瞎子', cost: '動態', location: '待定', desc: '1. 道具：海綿棒x2，眼罩x2。\n2. 玩法：戴眼罩原地轉3圈迷失方向。依靠直覺或隊友呼喊攻擊。\n3. 判定：擊中頭部/軀幹+1分，對手出界+1分。先得3分者勝。', perfect: '3:0 或 3:1 獲勝 (抽獎x1)' },
-                { id: 5, type: 'SOLO', name: '重生之我變成特工007', cost: '200', location: '待定', desc: '1. 玩法：1人挑戰。穿越掛滿鈴鐺的紅繩陣取物。\n2. 判定：身體觸碰鈴鐺發出聲響即失敗。\n3. Pay-to-Win：支付200道可剪斷一條紅繩。', perfect: '一次不失誤穿過整個陣仗 (抽獎x1)' },
-                { id: 6, type: 'PVP', name: '重生之我變成初音我婆', cost: '動態', location: '待定', desc: '1. 玩法：輪流抽取積木堆疊。若抽到指令積木（如“單腳站立抽”），必須執行。\n2. 判定：誰弄倒了塔，誰直接判負。\n3. 完勝：成功執行3次指令且塔未倒，或塔高度翻倍。', perfect: '執行3次指令且未倒 或 高度翻倍 (抽獎x1)' },
-                { id: 7, type: 'PVP', name: '重生之我變成人體投籃機這些事', cost: '動態', location: '待定', desc: '1. 核心：4人投球，1人用頭接。\n2. 限制：接球者頭上綁籃筐，只能動身/頭，絕對不可用手碰籃筐。\n3. 判定：限時1分鐘，接球多者勝。', perfect: '接住10顆球 (抽獎x1)' },
-                { id: 8, type: 'PVP', name: '重生之我變成拆彈專家', cost: '動態', location: '待定', desc: '1. 配置：指揮官（能看不能動）+ 拆彈員（戴眼罩能動）。\n2. 玩法：指揮官口頭指揮拆彈員完成4x4拼圖。\n3. 判定：先完成拼圖者勝。', perfect: '60秒內完成 + 無廢話/無肢體接觸 (抽獎x1)' },
-                { id: 10, type: 'PVP/E', name: '重生之我變成諸葛亮', cost: '動態', location: '待定', desc: '1. 玩法：雙方將100兵力分配給A、B、C三城。\n2. 判定：同時亮牌，兵力多者佔城（相同平局）。\n3. 獲勝：佔領2座以上城池。\n4. 死局規則：若1勝1負1平，比較獲勝城所耗兵力，兵力少者勝（以少勝多）。', perfect: '3:0 完勝 (抽獎x1)' },
-                { id: 11, type: 'PVP', name: '重生之我變成迪達拉', cost: '動態', location: '待定', desc: '1. 規則：輪流給氣球打氣，每回合必須按1~5下。\n2. 反轉：若敢一次性按超過5下且氣球沒爆，可反轉回合（讓對方連按兩輪）。\n3. 判定：氣球爆炸者負。', perfect: '成功執行2次以上“反轉”且獲勝 (抽獎x1)' },
-                { id: 12, type: 'PVP', name: '重生之我變成狗', cost: '動態', location: '待定', desc: '1. 配置：7杯水，其中1杯是炸彈（醋/蛇草水）。\n2. 玩法：兩隊輪流選一杯一口悶。\n3. 判定：喝到炸彈者判負。但若喝完面無表情騙過對方（對方以為是水），則反殺獲勝。', perfect: '喝炸彈騙過對方 或 首輪選中對方炸彈 (抽獎x1)' }
-            ]
+            games: [] // Loaded below
         };
 
-        let state = JSON.parse(JSON.stringify(DEFAULT_STATE));
+        let networkOffset = 0; 
         let currentUser = null;
 
-        // --- Synced Now Helper ---
+        // --- 3. Robust Time Sync Function (Firebase Native Style) ---
+        // 我們通過在資料庫寫入一個 timestamp 再讀回來，來計算本地時鐘與 Google 伺服器的時差
+        async function syncTimeWithFirestore() {
+            try {
+                const statusEl = document.getElementById('connection-status');
+                statusEl.innerText = "CALIBRATING TIME...";
+                
+                const timeDoc = doc(db, 'artifacts', currentAppId, 'public', 'data', 'timeCheck');
+                await setDoc(timeDoc, { t: serverTimestamp() });
+                const snap = await getDoc(timeDoc);
+                const serverTime = snap.data().t.toMillis();
+                const localTime = Date.now();
+                networkOffset = serverTime - localTime;
+                
+                console.log("Time Sync Complete. Offset:", networkOffset, "ms");
+                return true;
+            } catch (e) {
+                console.warn("Firestore time sync failed, using local clock.", e);
+                return false;
+            }
+        }
+
         window.getSyncedNow = () => Date.now() + networkOffset;
 
-        // --- Functions ---
-
+        // --- 4. Core Logic ---
         async function init() {
             const statusEl = document.getElementById('connection-status');
             
-            // Step 1: Sync Time with External API to fix "Clock Sync" issues
+            // Step A: Auth
+            statusEl.innerText = "AUTHENTICATING...";
             try {
-                statusEl.innerText = "SYNCING TIME...";
-                const start = Date.now();
-                const resp = await fetch('https://worldtimeapi.org/api/timezone/Etc/UTC');
-                const data = await resp.json();
-                const globalNow = new Date(data.datetime).getTime();
-                // Network latency adjustment: assume half of the RTT
-                const rtt = Date.now() - start;
-                networkOffset = globalNow - (start + rtt/2);
-                console.log("Time synced. Offset:", networkOffset, "ms");
+                await signInAnonymously(auth);
             } catch (e) {
-                console.warn("Time sync failed, falling back to local clock.", e);
-            }
-
-            // Step 2: Handle Auth
-            try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (e) {
-                console.error("Auth Error:", e);
+                console.error("Auth Failed:", e);
                 statusEl.innerText = "AUTH ERROR: 請去 Firebase 開啟 Anonymous 權限";
-                statusEl.classList.add('text-red-500');
+                return;
             }
 
-            onAuthStateChanged(auth, (user) => {
+            onAuthStateChanged(auth, async (user) => {
                 if (user) {
                     currentUser = user;
-                    statusEl.innerText = "ONLINE (ID: " + user.uid.substring(0,4) + ")";
-                    statusEl.classList.remove('offline', 'text-red-500');
+                    // Step B: Time Sync
+                    await syncTimeWithFirestore();
+                    
+                    statusEl.innerText = `CONNECTED (${user.uid.substring(0,4)})`;
+                    statusEl.classList.remove('offline');
+                    
                     setupRealtimeListener();
                 } else {
-                    currentUser = null;
-                    if (!statusEl.innerText.includes("ERROR")) {
-                        statusEl.innerText = "OFFLINE";
-                        statusEl.classList.add('offline');
-                    }
+                    statusEl.innerText = "OFFLINE";
+                    statusEl.classList.add('offline');
                 }
             });
 
-            renderAll();
             startLoop();
             setupAdminTrigger();
         }
 
         function setupRealtimeListener() {
-            if (!currentUser) return;
-            let docRef = (appId === 'default-game-room') 
-                ? doc(db, 'gameData', 'globalState') 
-                : doc(db, 'artifacts', appId, 'public', 'data', 'gameState');
+            const statusEl = document.getElementById('connection-status');
+            statusEl.innerText = "SYNCING DATA...";
+
+            const docRef = doc(db, 'artifacts', currentAppId, 'public', 'data', 'gameState');
 
             onSnapshot(docRef, (docSnap) => {
                 if (docSnap.exists()) {
-                    state = docSnap.data();
+                    const remoteData = docSnap.data();
+                    // 只在版本匹配時更新
+                    state = remoteData;
                     renderAll();
+                    statusEl.innerText = `LIVE (Skew: ${Math.round(networkOffset)}ms)`;
                 } else {
+                    console.log("No remote state found. Initializing...");
+                    state.games = getInitialGames(); // 只有第一次初始化需要
                     saveState();
                 }
             }, (error) => {
-                console.error("Sync Error:", error);
-                const statusEl = document.getElementById('connection-status');
-                statusEl.innerText = "SYNC ERROR: 請檢查 Firestore 權限規則";
-                statusEl.classList.add('text-red-500');
+                console.error("Firestore Error:", error);
+                statusEl.innerText = "DATABASE ERROR (Check Rules)";
             });
         }
 
         async function saveState() {
             if (!currentUser) return;
-            let docRef = (appId === 'default-game-room') 
-                ? doc(db, 'gameData', 'globalState') 
-                : doc(db, 'artifacts', appId, 'public', 'data', 'gameState');
-            
+            const docRef = doc(db, 'artifacts', currentAppId, 'public', 'data', 'gameState');
             try {
                 await setDoc(docRef, state, { merge: true });
             } catch (e) {
@@ -163,6 +147,7 @@
             }
         }
 
+        // --- UI Rendering ---
         function renderAll() {
             const ticker = document.getElementById('ticker-bar');
             const annoText = document.getElementById('anno-text');
@@ -177,9 +162,9 @@
             updateStockUI('004');
 
             const container = document.getElementById('games-container');
-            if(container) {
+            if(container && state.games) {
                 container.innerHTML = state.games.map(g => `
-                    <div class="glass-card p-5 rounded-lg relative hover:bg-white/5 transition-colors group border border-white/5 hover:border-[#d4af37]/30 cursor-pointer" onclick="openGameDetails(${g.id})">
+                    <div class="glass-card p-5 rounded-lg relative hover:bg-white/5 transition-colors group border border-white/5 hover:border-[#d4af37]/30 cursor-pointer" onclick="window.openGameDetails(${g.id})">
                         <div class="flex justify-between items-center mb-4 pointer-events-none">
                             <span class="text-[10px] font-bold px-2 py-0.5 rounded tracking-wider ${g.type === 'PVP' ? 'badge-pvp' : g.type === 'PVE' ? 'badge-pve' : 'badge-mixed'}">${g.type}</span>
                             <div class="text-right">
@@ -197,9 +182,6 @@
                             <div class="text-[9px] text-[#d4af37] font-bold uppercase mb-0.5 tracking-wider">Perfect Win</div>
                             <div class="text-xs text-gray-300 leading-tight truncate">${g.perfect}</div>
                         </div>
-                        <div class="absolute bottom-4 right-4 text-[#d4af37] opacity-0 group-hover:opacity-100 transition text-xs flex items-center gap-1">
-                            查看詳情 <i class="fa-solid fa-arrow-right"></i>
-                        </div>
                         <button onclick="event.stopPropagation(); window.editGame(${g.id})" class="admin-el absolute top-4 right-4 text-gray-600 hover:text-white bg-black/50 w-6 h-6 rounded-full items-center justify-center z-10"><i class="fa-solid fa-pen text-xs"></i></button>
                     </div>
                 `).join('');
@@ -210,53 +192,31 @@
             const s = state.stocks[code];
             const total = s.w + s.l;
             const rate = total === 0 ? 0 : Math.round((s.w / total) * 100);
-            
-            const wEl = document.getElementById(`win-${code}`);
-            if(wEl) wEl.innerText = s.w;
+            document.getElementById(`win-${code}`).innerText = s.w;
             document.getElementById(`loss-${code}`).innerText = s.l;
             document.getElementById(`rate-${code}`).innerText = rate + "%";
 
             const statusText = document.getElementById(`stock-status-text-${code}`);
             const card = document.getElementById(`stock-${code}-card`);
-            
-            let displayText = "WAITING";
-            let colorClass = "text-gray-600";
-            let borderClass = "";
+            let displayText = "WAITING", colorClass = "text-gray-600", borderClass = "";
 
-            if (total < 5) {
-                displayText = "流局 (REFUND)";
-                colorClass = "text-gray-500";
-            } else if (rate >= 80) {
-                displayText = "瘋牛 (+200%)";
-                colorClass = "text-green-400 neon-text-gold";
-                borderClass = "neon-border-green";
-            } else if (rate >= 60) {
-                displayText = "牛市 (+150)";
-                colorClass = "text-green-500";
-            } else if (rate >= 40) {
-                displayText = "震盪 (-5%)";
-                colorClass = "text-yellow-500";
-            } else {
-                displayText = "崩盤 (-50%)";
-                colorClass = "text-red-600 neon-text-red";
-                borderClass = "neon-border-red";
-            }
+            if (total < 5) { displayText = "流局 (REFUND)"; colorClass = "text-gray-500"; }
+            else if (rate >= 80) { displayText = "瘋牛 (+200%)"; colorClass = "text-green-400 neon-text-gold"; borderClass = "neon-border-green"; }
+            else if (rate >= 60) { displayText = "牛市 (+150)"; colorClass = "text-green-500"; }
+            else if (rate >= 40) { displayText = "震盪 (-5%)"; colorClass = "text-yellow-500"; }
+            else { displayText = "崩盤 (-50%)"; colorClass = "text-red-600 neon-text-red"; borderClass = "neon-border-red"; }
 
             statusText.innerText = displayText;
             statusText.className = `text-2xl font-bold tracking-widest ${colorClass}`;
-            
-            card.classList.remove('neon-border-green', 'neon-border-red');
+            card.classList.remove('neon-border-green', 'neon-border-red', 'settle-flash');
             if(state.stockState === 'SETTLED' && borderClass) {
-                 card.classList.add(borderClass);
-                 card.classList.add('settle-flash');
-            } else {
-                card.classList.remove('settle-flash');
+                card.classList.add(borderClass, 'settle-flash');
             }
         }
 
         function startLoop() {
             setInterval(() => {
-                const now = window.getSyncedNow(); // Use synced time instead of Date.now()
+                const now = window.getSyncedNow(); 
                 let lDiff = state.lotteryEndTime - now;
                 const lStatusEl = document.getElementById('lottery-status-badge');
                 const lTimerEl = document.getElementById('timer-display');
@@ -300,12 +260,11 @@
 
         function formatTime(ms) {
             if (ms < 0) return "00:00";
-            const m = Math.floor(ms / 60000);
-            const s = Math.floor((ms % 60000) / 1000);
+            const m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000);
             return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
         }
 
-        // --- Global Exports (for UI handlers) ---
+        // --- Global Exports ---
         window.openGameDetails = (id) => {
             const g = state.games.find(x => x.id === id);
             if(!g) return;
@@ -316,64 +275,37 @@
             document.getElementById('modal-location').innerText = g.location || '待定';
             document.getElementById('modal-desc').innerText = g.desc;
             document.getElementById('modal-perfect').innerText = g.perfect;
-            const body = document.getElementById('app-body');
-            body.classList.remove('modal-closed');
-            body.classList.add('modal-open');
+            document.getElementById('app-body').classList.replace('modal-closed', 'modal-open');
         };
-
-        window.closeGameDetails = () => {
-            const body = document.getElementById('app-body');
-            body.classList.remove('modal-open');
-            body.classList.add('modal-closed');
-        };
-
+        window.closeGameDetails = () => document.getElementById('app-body').classList.replace('modal-open', 'modal-closed');
         window.setTab = (t) => {
-            const db_view = document.getElementById('view-dashboard');
-            const gm_view = document.getElementById('view-games');
             const btns = document.querySelectorAll('.tab-btn');
             btns.forEach(b => b.classList.remove('active'));
             if(t === 'dashboard') {
-                db_view.classList.remove('view-inactive');
-                db_view.classList.add('view-active');
-                gm_view.classList.remove('view-active');
-                gm_view.classList.add('view-inactive');
+                document.getElementById('view-dashboard').className = "view-section view-active";
+                document.getElementById('view-games').className = "view-section view-inactive";
                 btns[0].classList.add('active');
             } else {
-                gm_view.classList.remove('view-inactive');
-                gm_view.classList.add('view-active');
-                db_view.classList.remove('view-active');
-                db_view.classList.add('view-inactive');
+                document.getElementById('view-dashboard').className = "view-section view-inactive";
+                document.getElementById('view-games').className = "view-section view-active";
                 btns[1].classList.add('active');
             }
         };
-
         window.autoSettleLottery = () => {
-            document.getElementById('draw-placeholder').classList.add('hidden');
-            document.getElementById('draw-result').classList.add('hidden');
-            document.getElementById('draw-active').classList.remove('hidden');
-            document.getElementById('draw-active').classList.add('flex');
+            const p = document.getElementById('draw-placeholder'), r = document.getElementById('draw-result'), a = document.getElementById('draw-active');
+            p.classList.add('hidden'); r.classList.add('hidden'); a.classList.replace('hidden', 'flex');
             const COLORS = ['ball-red', 'ball-green', 'ball-blue'];
             const interval = setInterval(() => {
-                const balls = document.querySelectorAll('#draw-active .mini-ball');
-                balls.forEach(b => {
-                    b.className = `mini-ball ${COLORS[Math.floor(Math.random()*3)]} ball-anim`;
-                });
+                document.querySelectorAll('#draw-active .mini-ball').forEach(b => b.className = `mini-ball ${COLORS[Math.floor(Math.random()*3)]} ball-anim`);
             }, 100);
             setTimeout(() => {
                 clearInterval(interval);
-                const r1 = COLORS[Math.floor(Math.random()*3)];
-                const r2 = COLORS[Math.floor(Math.random()*3)];
-                const r3 = COLORS[Math.floor(Math.random()*3)];
-                document.getElementById('draw-active').classList.add('hidden');
-                document.getElementById('draw-result').classList.remove('hidden');
-                document.getElementById('draw-result').classList.add('flex');
-                document.getElementById('r-ball-1').className = `mini-ball ${r1}`;
-                document.getElementById('r-ball-2').className = `mini-ball ${r2}`;
-                document.getElementById('r-ball-3').className = `mini-ball ${r3}`;
-                setTimeout(() => {
-                     document.getElementById('draw-result').classList.add('hidden');
-                     document.getElementById('draw-placeholder').classList.remove('hidden');
-                }, 10000);
+                const results = [COLORS[Math.floor(Math.random()*3)], COLORS[Math.floor(Math.random()*3)], COLORS[Math.floor(Math.random()*3)]];
+                a.classList.replace('flex', 'hidden'); r.classList.replace('hidden', 'flex');
+                document.getElementById('r-ball-1').className = `mini-ball ${results[0]}`;
+                document.getElementById('r-ball-2').className = `mini-ball ${results[1]}`;
+                document.getElementById('r-ball-3').className = `mini-ball ${results[2]}`;
+                setTimeout(() => { r.classList.add('hidden'); p.classList.remove('hidden'); }, 10000);
             }, 3000);
         };
 
@@ -381,14 +313,14 @@
         window.resetLotteryTime = () => { state.lotteryEndTime = window.getSyncedNow() + CONFIG.lotteryDuration * 60000; state.lotteryState='OPEN'; saveState(); };
         window.modStockTime = (m) => { state.stockEndTime += m * 60000; saveState(); };
         window.resetStockTime = () => {
-            if(confirm('⚠️ 確定重置股票週期嗎？\n這將清空所有 002/004 的勝負場數！')) {
+            if(confirm('⚠️ 確定重置股票週期嗎？')) {
                 state.stockEndTime = window.getSyncedNow() + CONFIG.stockDuration * 60000; 
                 state.stockState='TRADING'; 
                 state.stocks = { '002': { w: 0, l: 0 }, '004': { w: 0, l: 0 } };
                 saveState();
             }
         };
-        window.modStock = (code, type, val) => { state.stocks[code][type] += val; if (state.stocks[code][type] < 0) state.stocks[code][type] = 0; saveState(); };
+        window.modStock = (code, type, val) => { state.stocks[code][type] += val; saveState(); };
         window.setJackpot = () => { const val = document.getElementById('input-jackpot').value; if(val) { state.jackpot = parseInt(val); saveState(); } };
         window.editAnno = () => { const n = prompt("公告:", state.anno); if(n !== null) { state.anno = n; saveState(); } };
         window.editGame = (id) => {
@@ -397,13 +329,9 @@
             if(cost) { g.cost = cost; const loc = prompt("Location:", g.location); if(loc) g.location = loc; saveState(); }
         };
         window.attemptLogin = () => {
-            if(document.body.classList.contains('is-admin')) return;
-            if(prompt("KEY:") === CONFIG.adminPass) {
-                document.body.classList.add('is-admin');
-                alert("ADMIN ACTIVE\nChanges will now sync to DB.");
-            }
+            if(prompt("KEY:") === CONFIG.adminPass) { document.body.classList.add('is-admin'); alert("ADMIN ACTIVE"); }
         };
-        window.logoutAdmin = () => { document.body.classList.remove('is-admin'); };
+        window.logoutAdmin = () => document.body.classList.remove('is-admin');
 
         function setupAdminTrigger() {
             let c = 0;
@@ -412,387 +340,190 @@
             });
         }
 
-        // Start App
+        function getInitialGames() {
+            return [
+                { id: 1, type: 'PVP', name: '剪刀石頭布破產大師', cost: '動態', location: '待定', desc: '1. 基礎規則：至少6人參與。每隊發6張卡（2石2剪2布）。\n2. 流程：嚴格進行6輪，卡片必須用完，不可保留。\n3. 死鎖：若平局，雙方各扣50道，下一輪贏家通吃。', perfect: '比分 5:1 或 6:0' },
+                { id: 2, type: 'PVE', name: '雙峰塔硬幣挑戰', cost: '200', location: '待定', desc: '1. 玩法：桌上有兩堆硬幣（11, 18）。\n2. 操作：單取或雙取。拿走最後一枚者勝。', perfect: '不買Add-on贏過Committee' },
+                { id: 3, type: 'PVE', name: '拋水瓶轉生', cost: '200', location: '待定', desc: '1. 玩法：旋轉水瓶使其穩穩站立。\n2. 勝利：限時1分鐘，成功次數多者勝。', perfect: '連續成功5次' },
+                { id: 4, type: 'PVP', name: '盲人打擊', cost: '動態', location: '待定', desc: '1. 道具：海綿棒+眼罩。\n2. 玩法：原地轉3圈，擊中對手得分。', perfect: '3:0 完勝' },
+                { id: 5, type: 'SOLO', name: '特工紅繩陣', cost: '200', location: '待定', desc: '1. 玩法：穿越掛滿鈴鐺的紅繩陣。觸碰鈴鐺即失敗。', perfect: '一次不失誤穿過' },
+                { id: 10, type: 'PVP/E', name: '諸葛亮兵法', cost: '動態', location: '待定', desc: '1. 玩法：分配100兵力至三城。多者佔城。佔領2座勝。', perfect: '3:0 完勝' }
+            ];
+        }
+
         init();
     </script>
 
     <style>
-        :root { 
-            --gold-main: #d4af37; 
-            --gold-light: #f9d976; 
-            --gold-dark: #8d7026; 
-            --bg-dark: #050505; 
-            --bg-card: rgba(20, 20, 20, 0.7);
-        }
-        
-        body { 
-            background-color: var(--bg-dark);
-            background-image: radial-gradient(circle at 50% 0%, #1a1a1a 0%, #050505 80%);
-            color: #e5e5e5; 
-            font-family: 'Noto Serif SC', serif; 
-            -webkit-tap-highlight-color: transparent;
-        }
-
-        .font-num { font-family: 'Oswald', sans-serif; letter-spacing: 0.05em; }
-        .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-
-        .glass-card {
-            background: var(--bg-card);
-            backdrop-filter: blur(16px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
-        }
-        
-        .dashboard-card {
-            background: linear-gradient(180deg, rgba(30,30,30,0.8) 0%, rgba(10,10,10,0.9) 100%);
-            border: 1px solid rgba(212, 175, 55, 0.1);
-            box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .neon-text-gold { text-shadow: 0 0 10px rgba(212, 175, 55, 0.5), 0 0 20px rgba(212, 175, 55, 0.3); }
-        .neon-border-green { box-shadow: 0 0 15px rgba(34, 197, 94, 0.2); border-color: rgba(34, 197, 94, 0.5); }
-        .neon-border-red { box-shadow: 0 0 15px rgba(239, 68, 68, 0.2); border-color: rgba(239, 68, 68, 0.5); }
-
+        :root { --gold-main: #d4af37; --bg-dark: #050505; --bg-card: rgba(20, 20, 20, 0.7); }
+        body { background: var(--bg-dark) radial-gradient(circle at 50% 0%, #1a1a1a 0%, #050505 80%); color: #e5e5e5; font-family: 'Noto Serif SC', serif; }
+        .font-num { font-family: 'Oswald', sans-serif; }
+        .glass-card { background: var(--bg-card); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.08); }
+        .dashboard-card { background: linear-gradient(180deg, rgba(30,30,30,0.8) 0%, rgba(10,10,10,0.9) 100%); border: 1px solid rgba(212, 175, 55, 0.1); }
+        .neon-text-gold { text-shadow: 0 0 10px rgba(212, 175, 55, 0.5); }
         body:not(.is-admin) .admin-el { display: none !important; }
-
-        .tab-btn {
-            position: relative;
-            opacity: 0.6;
-            transition: all 0.3s ease;
-        }
-        .tab-btn.active {
-            opacity: 1;
-            color: var(--gold-main);
-            text-shadow: 0 0 15px rgba(212, 175, 55, 0.4);
-        }
-        .tab-btn.active::after {
-            content: '';
-            position: absolute;
-            bottom: -4px;
-            left: 0;
-            width: 100%;
-            height: 2px;
-            background: var(--gold-main);
-            box-shadow: 0 0 10px var(--gold-main);
-        }
-
-        .view-section {
-            position: absolute;
-            inset: 0;
-            padding: 1rem 1rem 10rem 1rem;
-            overflow-y: auto;
-            transition: opacity 0.5s cubic-bezier(0.32, 0.72, 0, 1), transform 0.5s cubic-bezier(0.32, 0.72, 0, 1);
-            background-color: transparent;
-            -ms-overflow-style: none;
-            scrollbar-width: none;
-        }
-        .view-section::-webkit-scrollbar { display: none; }
-
-        .view-active { opacity: 1; transform: scale(1); pointer-events: auto; z-index: 10; }
-        .view-inactive { opacity: 0; transform: scale(0.95); pointer-events: none; z-index: 0; }
-
-        #game-modal { transition: opacity 0.4s cubic-bezier(0.32, 0.72, 0, 1); }
-        #game-modal-content { transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        .tab-btn { opacity: 0.6; transition: 0.3s; }
+        .tab-btn.active { opacity: 1; color: var(--gold-main); text-shadow: 0 0 10px var(--gold-main); }
+        .view-section { position: absolute; inset: 0; padding: 1rem 1rem 10rem; transition: 0.5s cubic-bezier(0.32, 0.72, 0, 1); }
+        .view-active { opacity: 1; transform: scale(1); pointer-events: auto; }
+        .view-inactive { opacity: 0; transform: scale(0.95); pointer-events: none; }
+        #game-modal { transition: opacity 0.4s; }
         .modal-open #game-modal { opacity: 1; pointer-events: auto; }
-        .modal-open #game-modal-content { transform: scale(1); }
         .modal-closed #game-modal { opacity: 0; pointer-events: none; }
-        .modal-closed #game-modal-content { transform: scale(0.9); }
-
-        .badge-pvp { background: rgba(153, 27, 27, 0.2); color: #fca5a5; border: 1px solid rgba(153, 27, 27, 0.4); }
-        .badge-pve { background: rgba(30, 64, 175, 0.2); color: #93c5fd; border: 1px solid rgba(30, 64, 175, 0.4); }
-        .badge-solo { background: rgba(107, 33, 168, 0.2); color: #d8b4fe; border: 1px solid rgba(107, 33, 168, 0.4); }
-        .badge-mixed { background: rgba(146, 64, 14, 0.2); color: #fdba74; border: 1px solid rgba(146, 64, 14, 0.4); }
-        
-        .progress-bar { transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
-
-        .mini-ball {
-            width: 40px; height: 40px;
-            border-radius: 50%;
-            border: 2px solid rgba(255,255,255,0.2);
-            box-shadow: inset -5px -5px 10px rgba(0,0,0,0.8), 0 0 10px rgba(0,0,0,0.5);
-            display: inline-block;
-            margin: 0 5px;
-            transition: all 0.2s;
-        }
-        .ball-red { background: radial-gradient(circle at 30% 30%, #ff6b6b, #991b1b); box-shadow: 0 0 15px #991b1b; }
-        .ball-green { background: radial-gradient(circle at 30% 30%, #4ade80, #166534); box-shadow: 0 0 15px #166534; }
-        .ball-blue { background: radial-gradient(circle at 30% 30%, #60a5fa, #1e40af); box-shadow: 0 0 15px #1e40af; }
-        .ball-gray { background: radial-gradient(circle at 30% 30%, #4b5563, #111827); border-color: #374151; }
-        
+        .mini-ball { width: 40px; height: 40px; border-radius: 50%; display: inline-block; margin: 0 5px; }
+        .ball-red { background: radial-gradient(circle at 30% 30%, #ff6b6b, #991b1b); }
+        .ball-green { background: radial-gradient(circle at 30% 30%, #4ade80, #166534); }
+        .ball-blue { background: radial-gradient(circle at 30% 30%, #60a5fa, #1e40af); }
+        .ball-gray { background: #333; }
         .ball-anim { animation: bounce 0.5s infinite alternate; }
         @keyframes bounce { from { transform: translateY(0); } to { transform: translateY(-10px); } }
-
-        .settle-flash { animation: settleFlash 1s infinite alternate; }
-        @keyframes settleFlash {
-            from { box-shadow: inset 0 0 0 rgba(255,255,255,0); }
-            to { box-shadow: inset 0 0 50px rgba(212, 175, 55, 0.3); }
-        }
-
-        #connection-status {
-            position: fixed;
-            bottom: 10px;
-            left: 10px;
-            font-size: 10px;
-            color: #4ade80;
-            z-index: 100;
-            font-family: monospace;
-            opacity: 0.5;
-            pointer-events: none;
-        }
-        #connection-status.offline { color: #ef4444; }
+        #connection-status { position: fixed; bottom: 10px; left: 10px; font-size: 10px; color: #4ade80; z-index: 100; font-family: monospace; }
+        .badge-pvp { background: rgba(153, 27, 27, 0.2); color: #fca5a5; }
+        .badge-pve { background: rgba(30, 64, 175, 0.2); color: #93c5fd; }
+        .badge-mixed { background: rgba(146, 64, 14, 0.2); color: #fdba74; }
     </style>
 </head>
 <body class="h-screen flex flex-col overflow-hidden modal-closed" id="app-body">
 
-    <!-- Header -->
-    <header class="flex-none h-16 px-6 flex justify-between items-center border-b border-white/5 bg-black/60 backdrop-blur-md z-50 relative">
-        <div class="flex items-center gap-3 cursor-pointer select-none" id="admin-trigger">
-            <div class="w-9 h-9 rounded-full border border-[#d4af37]/30 flex items-center justify-center bg-gradient-to-b from-[#2a2a2a] to-[#0a0a0a] shadow-[0_0_10px_rgba(212,175,55,0.1)]">
-                <i class="fa-solid fa-coins text-[#d4af37] text-xs"></i>
+    <header class="flex-none h-16 px-6 flex justify-between items-center border-b border-white/5 bg-black/60 backdrop-blur-md z-50">
+        <div class="flex items-center gap-3 cursor-pointer" id="admin-trigger">
+            <div class="w-9 h-9 rounded-full border border-[#d4af37]/30 flex items-center justify-center bg-black">
+                <i class="fa-solid fa-coins text-[#d4af37]"></i>
             </div>
-            <h1 class="text-xl font-bold tracking-[0.25em] text-gold-gradient uppercase font-num">初火錢莊</h1>
+            <h1 class="text-xl font-bold tracking-widest text-white font-num">初火錢莊</h1>
         </div>
-        
-        <nav class="flex gap-8 text-sm font-bold tracking-widest items-center">
-            <button onclick="window.setTab('dashboard')" class="tab-btn active text-gray-400 hover:text-white pb-1">大盤監控</button>
-            <button onclick="window.setTab('games')" class="tab-btn text-gray-400 hover:text-white pb-1">遊戲手冊</button>
-            <button onclick="window.attemptLogin()" class="text-gray-600 hover:text-[#d4af37] transition-colors px-2 ml-2"><i class="fa-solid fa-user-gear"></i></button>
+        <nav class="flex gap-8 text-sm font-bold items-center">
+            <button onclick="window.setTab('dashboard')" class="tab-btn active text-gray-400 pb-1">大盤監控</button>
+            <button onclick="window.setTab('games')" class="tab-btn text-gray-400 pb-1">遊戲手冊</button>
+            <button onclick="window.attemptLogin()" class="text-gray-600 hover:text-white ml-2"><i class="fa-solid fa-user-gear"></i></button>
         </nav>
     </header>
 
-    <!-- Main Content -->
-    <main class="flex-1 relative overflow-hidden bg-black/20 w-full">
-        
-        <!-- DASHBOARD VIEW -->
+    <main class="flex-1 relative bg-black/20 w-full">
         <section id="view-dashboard" class="view-section view-active">
-            
-            <!-- Ticker -->
-            <div id="ticker-bar" class="w-full bg-black/40 border border-[#d4af37]/20 rounded-md p-2 mb-8 flex items-center shadow-[0_0_15px_rgba(212,175,55,0.05)] max-w-7xl mx-auto">
-                <div id="ticker-label" class="bg-[#d4af37]/10 px-3 py-1 rounded text-xs text-[#d4af37] font-bold mr-3 whitespace-nowrap">LIVE FEED</div>
-                <div class="flex-1 overflow-hidden relative h-5">
-                    <p id="anno-text" class="text-sm text-[#d4af37]/90 font-medium whitespace-nowrap absolute w-full truncate">正在連接至初火錢莊系統...</p>
-                </div>
+            <div id="ticker-bar" class="w-full bg-black/40 border border-[#d4af37]/20 rounded p-2 mb-8 flex items-center max-w-7xl mx-auto">
+                <div class="bg-[#d4af37]/10 px-3 py-1 rounded text-xs text-[#d4af37] font-bold mr-3">LIVE</div>
+                <p id="anno-text" class="text-sm text-[#d4af37]/90 truncate">正在連接...</p>
             </div>
 
             <div class="max-w-7xl mx-auto space-y-8 pb-20">
-                
-                <!-- Lottery Center -->
-                <div id="lottery-card" class="dashboard-card rounded-2xl p-6 text-center group">
-                    <div class="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10"></div>
-                    <div class="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-[#d4af37] to-transparent shadow-[0_0_15px_#d4af37]"></div>
-                    
-                    <div class="relative z-10 grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
-                        <div class="text-center md:text-left">
-                            <p class="text-[10px] text-[#d4af37] tracking-[0.4em] uppercase mb-2 opacity-80">Lottery Jackpot</p>
-                            <div class="flex justify-center md:justify-start items-baseline gap-2">
-                                <span class="text-2xl text-[#d4af37]/80 font-light">¥</span>
-                                <span id="jackpot-display" class="text-5xl md:text-6xl font-black text-white font-num neon-text-gold tracking-tighter">--</span>
-                            </div>
+                <div id="lottery-card" class="dashboard-card rounded-2xl p-6 text-center">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
+                        <div>
+                            <p class="text-[10px] text-[#d4af37] tracking-widest uppercase mb-2">Lottery Jackpot</p>
+                            <span class="text-2xl text-[#d4af37]/80">¥</span>
+                            <span id="jackpot-display" class="text-5xl font-black text-white font-num neon-text-gold">--</span>
                         </div>
-                        <div class="flex flex-col items-center justify-center h-24 bg-black/40 rounded-lg border border-white/5 relative overflow-hidden">
-                            <div id="draw-placeholder" class="flex flex-col items-center transition-opacity duration-300">
-                                <span class="text-xs text-gray-500 tracking-widest mb-1">WINNING COLORS</span>
-                                <div class="flex gap-2 opacity-30">
-                                    <div class="w-8 h-8 rounded-full border border-white/30"></div>
-                                    <div class="w-8 h-8 rounded-full border border-white/30"></div>
-                                    <div class="w-8 h-8 rounded-full border border-white/30"></div>
-                                </div>
+                        <div class="flex flex-col items-center justify-center h-24 bg-black/40 rounded border border-white/5 relative">
+                            <div id="draw-placeholder" class="flex gap-2 opacity-30">
+                                <div class="mini-ball ball-gray"></div><div class="mini-ball ball-gray"></div><div class="mini-ball ball-gray"></div>
                             </div>
-                            <div id="draw-active" class="hidden absolute inset-0 flex items-center justify-center gap-3 bg-black/80">
-                                <div id="l-ball-1" class="mini-ball ball-gray"></div>
-                                <div id="l-ball-2" class="mini-ball ball-gray"></div>
-                                <div id="l-ball-3" class="mini-ball ball-gray"></div>
+                            <div id="draw-active" class="hidden absolute inset-0 items-center justify-center gap-3 bg-black/80">
+                                <div class="mini-ball ball-gray ball-anim"></div><div class="mini-ball ball-gray ball-anim"></div><div class="mini-ball ball-gray ball-anim"></div>
                             </div>
-                            <div id="draw-result" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-black/90 z-20">
-                                <div class="text-[10px] text-[#d4af37] tracking-[0.2em] mb-1">RESULT</div>
+                            <div id="draw-result" class="hidden absolute inset-0 flex-col items-center justify-center bg-black/90">
                                 <div class="flex gap-2">
-                                    <div id="r-ball-1" class="mini-ball ball-gray"></div>
-                                    <div id="r-ball-2" class="mini-ball ball-gray"></div>
-                                    <div id="r-ball-3" class="mini-ball ball-gray"></div>
+                                    <div id="r-ball-1" class="mini-ball"></div><div id="r-ball-2" class="mini-ball"></div><div id="r-ball-3" class="mini-ball"></div>
                                 </div>
                             </div>
                         </div>
-                        <div class="text-center md:text-right">
-                            <div id="lottery-status-badge" class="inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 bg-gray-800 text-gray-500 border border-gray-700">WAITING</div>
-                            <div class="text-[10px] text-gray-400 mb-1 tracking-widest">NEXT DRAW IN</div>
+                        <div>
+                            <div id="lottery-status-badge" class="inline-block px-3 py-1 rounded text-xs font-bold mb-2 bg-gray-800">WAITING</div>
                             <div id="timer-display" class="font-num text-4xl text-white font-bold">--:--</div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Stocks -->
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div id="stock-002-card" class="dashboard-card rounded-2xl p-6 relative overflow-hidden transition-all duration-500">
-                        <div class="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10"></div>
-                        <div class="relative z-10 flex flex-col h-full justify-between">
-                            <div class="flex justify-between items-start mb-4">
-                                <div>
-                                    <div class="text-[10px] text-gray-500 tracking-[0.2em] uppercase mb-1">Stock Code</div>
-                                    <div class="text-4xl font-black italic text-white font-num tracking-tight">002</div>
-                                </div>
-                                <div class="text-right">
-                                    <div class="text-[10px] text-gray-500 tracking-[0.2em] uppercase mb-1">Win Rate</div>
-                                    <div id="rate-002" class="text-3xl font-bold text-[#d4af37] font-num">0%</div>
-                                </div>
-                            </div>
-                            <div class="flex items-center justify-center py-4 my-2 bg-black/30 rounded border border-white/5">
-                                <div id="stock-status-text-002" class="text-2xl font-bold text-gray-600 tracking-widest">WAITING</div>
-                            </div>
-                            <div class="flex justify-between items-end">
-                                <div>
-                                    <div class="text-[10px] text-gray-500 mb-1">W / L</div>
-                                    <div class="font-num text-sm space-x-2">
-                                        <span class="text-green-500 font-bold" id="win-002">0</span>
-                                        <span class="text-gray-600">/</span>
-                                        <span class="text-red-500 font-bold" id="loss-002">0</span>
-                                    </div>
-                                </div>
-                                <div class="text-right">
-                                    <div id="stock-timer-label" class="text-[10px] text-gray-500 mb-1">CYCLE TIMER (35m)</div>
-                                    <div id="stock-timer-display" class="font-num text-xl text-white">--:--</div>
-                                </div>
-                            </div>
+                    <div id="stock-002-card" class="dashboard-card rounded-2xl p-6 relative">
+                        <div class="flex justify-between items-start mb-4">
+                            <div><div class="text-[10px] text-gray-500">STOCK CODE</div><div class="text-4xl font-black italic text-white font-num">002</div></div>
+                            <div class="text-right"><div class="text-[10px] text-gray-500">WIN RATE</div><div id="rate-002" class="text-3xl font-bold text-[#d4af37] font-num">0%</div></div>
+                        </div>
+                        <div class="flex items-center justify-center py-4 bg-black/30 rounded border border-white/5">
+                            <div id="stock-status-text-002" class="text-2xl font-bold text-gray-600">WAITING</div>
+                        </div>
+                        <div class="flex justify-between items-end mt-4">
+                            <div><span class="text-green-500 font-bold" id="win-002">0</span> <span class="text-gray-600">/</span> <span class="text-red-500 font-bold" id="loss-002">0</span></div>
+                            <div id="stock-timer-display" class="font-num text-xl text-white">--:--</div>
                         </div>
                     </div>
-                    <div id="stock-004-card" class="dashboard-card rounded-2xl p-6 relative overflow-hidden transition-all duration-500">
-                        <div class="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10"></div>
-                        <div class="relative z-10 flex flex-col h-full justify-between">
-                            <div class="flex justify-between items-start mb-4">
-                                <div>
-                                    <div class="text-[10px] text-gray-500 tracking-[0.2em] uppercase mb-1">Stock Code</div>
-                                    <div class="text-4xl font-black italic text-white font-num tracking-tight">004</div>
-                                </div>
-                                <div class="text-right">
-                                    <div class="text-[10px] text-gray-500 tracking-[0.2em] uppercase mb-1">Win Rate</div>
-                                    <div id="rate-004" class="text-3xl font-bold text-[#d4af37] font-num">0%</div>
-                                </div>
-                            </div>
-                            <div class="flex items-center justify-center py-4 my-2 bg-black/30 rounded border border-white/5">
-                                <div id="stock-status-text-004" class="text-2xl font-bold text-gray-600 tracking-widest">WAITING</div>
-                            </div>
-                            <div class="flex justify-between items-end">
-                                <div>
-                                    <div class="text-[10px] text-gray-500 mb-1">W / L</div>
-                                    <div class="font-num text-sm space-x-2">
-                                        <span class="text-green-500 font-bold" id="win-004">0</span>
-                                        <span class="text-gray-600">/</span>
-                                        <span class="text-red-500 font-bold" id="loss-004">0</span>
-                                    </div>
-                                </div>
-                                <div class="text-right">
-                                    <div id="stock-timer-label" class="text-[10px] text-gray-500 mb-1">CYCLE TIMER</div>
-                                    <div id="stock-timer-display" class="font-num text-xl text-white stock-shared-timer">--:--</div>
-                                </div>
-                            </div>
+                    <div id="stock-004-card" class="dashboard-card rounded-2xl p-6 relative">
+                        <div class="flex justify-between items-start mb-4">
+                            <div><div class="text-[10px] text-gray-500">STOCK CODE</div><div class="text-4xl font-black italic text-white font-num">004</div></div>
+                            <div class="text-right"><div class="text-[10px] text-gray-500">WIN RATE</div><div id="rate-004" class="text-3xl font-bold text-[#d4af37] font-num">0%</div></div>
+                        </div>
+                        <div class="flex items-center justify-center py-4 bg-black/30 rounded border border-white/5">
+                            <div id="stock-status-text-004" class="text-2xl font-bold text-gray-600">WAITING</div>
+                        </div>
+                        <div class="flex justify-between items-end mt-4">
+                            <div><span class="text-green-500 font-bold" id="win-004">0</span> <span class="text-gray-600">/</span> <span class="text-red-500 font-bold" id="loss-004">0</span></div>
+                            <div class="font-num text-xl text-white stock-shared-timer">--:--</div>
                         </div>
                     </div>
                 </div>
             </div>
         </section>
 
-        <!-- MANUAL VIEW -->
         <section id="view-games" class="view-section view-inactive">
             <div class="max-w-7xl mx-auto pb-20">
-                <h2 class="text-center text-xl text-gold-gradient font-bold mb-8 tracking-[0.3em] font-num uppercase border-b border-white/5 pb-4">Game Manual</h2>
+                <h2 class="text-center text-xl text-white font-bold mb-8 tracking-widest font-num border-b border-white/5 pb-4 uppercase">Game Manual</h2>
                 <div id="games-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5"></div>
             </div>
         </section>
-
     </main>
 
-    <!-- Game Detail Modal -->
-    <div id="game-modal" class="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 pointer-events-none opacity-0">
-        <div id="game-modal-content" class="bg-[#111] border border-[#d4af37]/30 w-full max-w-2xl rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.8)] overflow-hidden transform scale-90">
-            <div class="bg-gradient-to-r from-[#d4af37]/20 to-transparent p-6 border-b border-[#d4af37]/20">
-                <div class="flex justify-between items-start">
-                    <div>
-                        <div id="modal-type" class="inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 border">PVP</div>
-                        <h2 id="modal-title" class="text-2xl md:text-3xl font-bold text-white leading-tight">Game Title</h2>
-                    </div>
-                    <button onclick="window.closeGameDetails()" class="text-gray-400 hover:text-white transition p-2">
-                        <i class="fa-solid fa-xmark text-2xl"></i>
-                    </button>
-                </div>
+    <div id="game-modal" class="fixed inset-0 z-[100] bg-black/80 backdrop-blur flex items-center justify-center p-4 modal-closed">
+        <div class="bg-[#111] border border-[#d4af37]/30 w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden">
+            <div class="p-6 border-b border-[#d4af37]/20 flex justify-between">
+                <div><div id="modal-type" class="px-3 py-1 rounded text-xs font-bold border">PVP</div><h2 id="modal-title" class="text-2xl font-bold text-white mt-2"></h2></div>
+                <button onclick="window.closeGameDetails()" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-2xl"></i></button>
             </div>
-            <div class="p-6 md:p-8 space-y-6 overflow-y-auto max-h-[70vh]">
+            <div class="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
                 <div class="grid grid-cols-2 gap-4">
-                    <div class="bg-white/5 p-4 rounded border border-white/10">
-                        <div class="text-[10px] text-gray-500 tracking-widest uppercase mb-1">Entry Fee</div>
-                        <div id="modal-cost" class="text-xl font-num text-[#d4af37]">0</div>
-                    </div>
-                    <div class="bg-white/5 p-4 rounded border border-white/10">
-                        <div class="text-[10px] text-gray-500 tracking-widest uppercase mb-1">Location</div>
-                        <div id="modal-location" class="text-xl text-gray-300">Station X</div>
-                    </div>
+                    <div class="bg-white/5 p-4 rounded">Fee: <span id="modal-cost" class="text-[#d4af37] font-num"></span></div>
+                    <div class="bg-white/5 p-4 rounded">Loc: <span id="modal-location" class="text-gray-300"></span></div>
                 </div>
-                <div>
-                    <h3 class="text-[#d4af37] font-bold text-sm tracking-widest uppercase mb-3 border-l-2 border-[#d4af37] pl-3">詳細規則</h3>
-                    <p id="modal-desc" class="text-gray-300 text-sm leading-relaxed whitespace-pre-line">Game Rules...</p>
-                </div>
-                <div class="bg-green-900/10 border border-green-500/30 p-4 rounded-lg">
-                    <h3 class="text-green-500 font-bold text-xs tracking-widest uppercase mb-2">完勝條件 Perfect Win</h3>
-                    <p id="modal-perfect" class="text-green-300 text-sm font-bold">Condition...</p>
-                </div>
+                <div><h3 class="text-[#d4af37] font-bold text-sm border-l-2 border-[#d4af37] pl-3">規則</h3><p id="modal-desc" class="text-gray-300 text-sm whitespace-pre-line mt-2"></p></div>
+                <div class="bg-green-900/10 border border-green-500/30 p-4 rounded-lg"><h3 class="text-green-500 font-bold text-xs uppercase mb-1">完勝條件</h3><p id="modal-perfect" class="text-green-300 text-sm font-bold"></p></div>
             </div>
         </div>
     </div>
 
-    <!-- Admin Console -->
-    <footer class="admin-el fixed bottom-0 w-full bg-[#050505]/95 backdrop-blur-xl border-t border-[#d4af37]/50 p-6 z-50 shadow-[0_-10px_40px_rgba(0,0,0,1)] transition-transform duration-300">
+    <footer class="admin-el fixed bottom-0 w-full bg-black/95 border-t border-[#d4af37]/50 p-6 z-50 transition-transform">
         <div class="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div class="space-y-3 border-r border-white/10 pr-6">
-                <h3 class="text-[#d4af37] font-bold tracking-[0.2em] text-xs uppercase mb-2"><i class="fa-solid fa-dice mr-2"></i>Lottery (30m)</h3>
+            <div class="space-y-3">
+                <h3 class="text-[#d4af37] font-bold text-xs"><i class="fa-solid fa-dice"></i> LOTTERY</h3>
                 <div class="flex gap-2">
-                    <button onclick="window.modLotteryTime(5)" class="flex-1 bg-gray-800 text-green-400 border border-white/10 rounded py-2 text-xs font-bold">+5m</button>
-                    <button onclick="window.modLotteryTime(-5)" class="flex-1 bg-gray-800 text-red-400 border border-white/10 rounded py-2 text-xs font-bold">-5m</button>
-                    <button onclick="window.resetLotteryTime()" class="flex-1 bg-gray-700 text-white border border-white/10 rounded py-2 text-xs font-bold">RESET</button>
+                    <button onclick="window.modLotteryTime(5)" class="flex-1 bg-gray-800 text-green-400 py-2 rounded">+5m</button>
+                    <button onclick="window.modLotteryTime(-5)" class="flex-1 bg-gray-800 text-red-400 py-2 rounded">-5m</button>
+                    <button onclick="window.resetLotteryTime()" class="flex-1 bg-gray-700 py-2 rounded">RESET</button>
                 </div>
-                <button onclick="window.autoSettleLottery()" class="w-full bg-[#d4af37]/20 text-[#d4af37] border border-[#d4af37]/50 rounded py-2 text-xs font-bold hover:bg-[#d4af37]/40">FORCE DRAW NOW</button>
-                <div class="flex gap-2 mt-1">
-                    <input id="input-jackpot" type="number" class="bg-black border border-white/20 text-white text-xs p-2 w-24 text-center font-num" placeholder="¥ Amount">
-                    <button onclick="window.setJackpot()" class="flex-1 bg-white/10 text-gray-300 border border-white/20 rounded py-2 text-xs font-bold">SET POOL</button>
-                </div>
+                <button onclick="window.autoSettleLottery()" class="w-full bg-[#d4af37]/20 text-[#d4af37] border border-[#d4af37] py-2 rounded">FORCE DRAW</button>
             </div>
-            <div class="space-y-3 border-r border-white/10 pr-6">
-                <h3 class="text-[#d4af37] font-bold tracking-[0.2em] text-xs uppercase mb-2"><i class="fa-solid fa-arrow-trend-up mr-2"></i>Stock (35m)</h3>
-                <div class="flex justify-between items-center bg-white/5 p-2 rounded mb-2">
-                    <span class="text-xs text-gray-400 font-bold px-2">TIME</span>
-                    <div class="flex gap-2">
-                        <button onclick="window.modStockTime(5)" class="px-2 py-1 bg-gray-800 text-green-400 text-[10px] rounded">+5</button>
-                        <button onclick="window.modStockTime(-5)" class="px-2 py-1 bg-gray-800 text-red-400 text-[10px] rounded">-5</button>
-                        <button onclick="window.resetStockTime()" class="px-2 py-1 bg-gray-700 text-white text-[10px] rounded hover:bg-red-900 transition-colors">RESET</button>
-                    </div>
-                </div>
+            <div class="space-y-3">
+                <h3 class="text-[#d4af37] font-bold text-xs"><i class="fa-solid fa-arrow-trend-up"></i> STOCKS</h3>
                 <div class="grid grid-cols-2 gap-2">
                     <div class="bg-white/5 p-2 rounded flex justify-between items-center">
-                        <span class="text-gray-400 text-[10px] font-bold">002</span>
+                        <span class="text-gray-400 text-xs">002</span>
                         <div class="flex gap-1">
-                            <button onclick="window.modStock('002', 'w', 1)" class="px-2 bg-green-900/40 text-green-500 rounded font-bold text-[10px] hover:bg-green-600 hover:text-black">W</button>
-                            <button onclick="window.modStock('002', 'l', 1)" class="px-2 bg-red-900/40 text-red-500 rounded font-bold text-[10px] hover:bg-red-600 hover:text-black">L</button>
+                            <button onclick="window.modStock('002', 'w', 1)" class="px-2 bg-green-900 text-green-400 rounded">W</button>
+                            <button onclick="window.modStock('002', 'l', 1)" class="px-2 bg-red-900 text-red-400 rounded">L</button>
                         </div>
                     </div>
                     <div class="bg-white/5 p-2 rounded flex justify-between items-center">
-                        <span class="text-gray-400 text-[10px] font-bold">004</span>
+                        <span class="text-gray-400 text-xs">004</span>
                         <div class="flex gap-1">
-                            <button onclick="window.modStock('004', 'w', 1)" class="px-2 bg-green-900/40 text-green-500 rounded font-bold text-[10px] hover:bg-green-600 hover:text-black">W</button>
-                            <button onclick="window.modStock('004', 'l', 1)" class="px-2 bg-red-900/40 text-red-500 rounded font-bold text-[10px] hover:bg-red-600 hover:text-black">L</button>
+                            <button onclick="window.modStock('004', 'w', 1)" class="px-2 bg-green-900 text-green-400 rounded">W</button>
+                            <button onclick="window.modStock('004', 'l', 1)" class="px-2 bg-red-900 text-red-400 rounded">L</button>
                         </div>
                     </div>
                 </div>
+                <button onclick="window.resetStockTime()" class="w-full bg-red-900/40 text-red-400 py-2 rounded">RESET ALL STOCKS</button>
             </div>
-            <div class="space-y-3 flex flex-col justify-between">
-                <div>
-                    <h3 class="text-[#d4af37] font-bold tracking-[0.2em] text-xs uppercase mb-2"><i class="fa-solid fa-gear mr-2"></i>System</h3>
-                    <button onclick="window.editAnno()" class="w-full bg-blue-900/10 hover:bg-blue-900/30 text-blue-400 border border-blue-900/30 rounded py-3 text-xs font-bold mb-2 text-left px-4">
-                        <i class="fa-solid fa-bullhorn mr-2"></i> EDIT TICKER
-                    </button>
-                </div>
-                <button onclick="window.logoutAdmin()" class="w-full bg-red-900/20 hover:bg-red-900/40 text-red-400 border border-red-900/50 rounded py-4 text-xs font-bold tracking-widest flex items-center justify-center gap-2">
-                    <i class="fa-solid fa-lock"></i> LOCK CONSOLE
-                </button>
+            <div class="space-y-3">
+                <button onclick="window.editAnno()" class="w-full bg-blue-900/20 text-blue-400 py-3 rounded"><i class="fa-solid fa-bullhorn"></i> EDIT TICKER</button>
+                <button onclick="window.logoutAdmin()" class="w-full bg-red-900 text-white py-3 rounded">LOCK CONSOLE</button>
             </div>
         </div>
     </footer>
