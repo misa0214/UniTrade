@@ -8,13 +8,13 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;500;700;900&family=Oswald:wght@400;700&display=swap" rel="stylesheet">
     
-    <!-- Firebase SDKs -->
+    <!-- Firebase SDKs (v12.9.0) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
-        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp, getDoc } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
 
-        // --- 1. Firebase 配置 (已適配您的專案 pycamp-9d9bb) ---
+        // --- 1. Firebase 配置 ---
         const firebaseConfig = {
             apiKey: "AIzaSyD0tDOe3lCgrT0ANIO87rlkigES_ivivfI",
             authDomain: "pycamp-9d9bb.firebaseapp.com",
@@ -25,65 +25,77 @@
             measurementId: "G-HY0C949GMR"
         };
 
-        // 固定一個全域唯一的 App ID
-        const currentAppId = "pycamp_final_v1";
-
+        const currentAppId = "pycamp_final_v2"; // 固定房間 ID
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // --- 2. 初始數據 ---
-        const CONFIG = { adminPass: "8888" };
+        // --- 2. 初始遊戲數據與配置 ---
+        const CONFIG = {
+            adminPass: "8888",
+            lotteryDuration: 30,
+            stockDuration: 35,
+            DATA_VERSION: "3.5"
+        };
+
+        // 預設 state，如果資料庫沒東西會用這個初始化
         let state = {
-            version: "2.9.1",
-            anno: "等待資料庫同步...",
+            version: CONFIG.DATA_VERSION,
+            anno: "初火錢莊交易系統已上線，請各位主帥前往站點進行博弈。",
             jackpot: 5000,
             lotteryEndTime: Date.now() + 1800000,
             stockEndTime: Date.now() + 2100000,
+            lotteryState: 'OPEN', 
+            stockState: 'TRADING',
             stocks: { '002': { w: 0, l: 0 }, '004': { w: 0, l: 0 } },
             games: getInitialGames()
         };
 
-        let networkOffset = 0;
+        let networkOffset = 0; 
         let currentUser = null;
 
+        // --- 3. 時間同步核心 ---
         window.getSyncedNow = () => Date.now() + networkOffset;
 
-        // --- 3. 核心初始化 ---
+        async function calibrateTime() {
+            try {
+                const timeDoc = doc(db, 'artifacts', currentAppId, 'public', 'data', 'system', 'time');
+                await setDoc(timeDoc, { t: serverTimestamp() });
+                const snap = await getDoc(timeDoc);
+                if (snap.exists() && snap.data().t) {
+                    networkOffset = snap.data().t.toMillis() - Date.now();
+                    console.log("Time Calibrated:", networkOffset);
+                }
+            } catch (e) {
+                console.warn("Time sync ignored by server rules.");
+            }
+        }
+
+        // --- 4. 初始化與監聽 ---
         async function init() {
             const statusEl = document.getElementById('connection-status');
-            
+            statusEl.innerText = "AUTHENTICATING...";
+
             try {
-                statusEl.innerText = "AUTH: 連接中...";
+                // Step A: 匿名登入
                 const cred = await signInAnonymously(auth);
                 currentUser = cred.user;
                 console.log("Logged in as:", currentUser.uid);
 
-                // 校準伺服器時間 (非同步)
-                try {
-                    const timeDoc = doc(db, 'artifacts', currentAppId, 'public', 'data', 'system', 'time');
-                    await setDoc(timeDoc, { t: serverTimestamp() });
-                    const snap = await getDoc(timeDoc);
-                    if (snap.exists()) networkOffset = snap.data().t.toMillis() - Date.now();
-                } catch(e) { 
-                    console.warn("Time sync blocked by rules, using local."); 
-                }
+                // Step B: 校準時間
+                await calibrateTime();
 
-                // 啟動實時數據監聽
+                // Step C: 監聽資料庫
                 setupRealtimeSync();
 
             } catch (e) {
                 console.error("Init Error:", e);
-                statusEl.innerText = "ERROR: " + e.code;
-                statusEl.className = "error-text";
+                statusEl.innerText = "AUTH ERROR: " + e.code;
             }
         }
 
         function setupRealtimeSync() {
             const statusEl = document.getElementById('connection-status');
-            statusEl.innerText = "DB: 正在獲取...";
-
-            // 使用符合規則的 6 段路徑: artifacts / {appId} / public / data / {collection} / {docId}
             const docRef = doc(db, 'artifacts', currentAppId, 'public', 'data', 'gameState', 'current');
 
             onSnapshot(docRef, (docSnap) => {
@@ -91,19 +103,15 @@
                     state = docSnap.data();
                     renderAll();
                     statusEl.innerText = `LIVE: ${currentUser.uid.substring(0,4)}`;
-                    statusEl.className = "live-text";
+                    statusEl.className = "live-info";
                 } else {
-                    statusEl.innerText = "DB: 初始化數據...";
+                    console.log("Room empty, creating initial state...");
                     saveState();
                 }
-            }, (err) => {
-                console.error("Snapshot Error:", err);
-                if(err.code === 'permission-denied') {
-                    statusEl.innerText = "ERROR: 權限不足！請到 Firebase Console 修改 Rules";
-                    statusEl.className = "error-text";
-                } else {
-                    statusEl.innerText = "SYNC ERROR: " + err.code;
-                }
+            }, (error) => {
+                console.error("Firestore Error:", error);
+                statusEl.innerText = "DB ERROR: Check Security Rules";
+                statusEl.className = "error-info";
             });
         }
 
@@ -113,77 +121,144 @@
             try {
                 await setDoc(docRef, state, { merge: true });
             } catch (e) {
-                console.error("Save Error:", e);
+                console.error("Write Error:", e);
             }
         }
 
-        // --- 4. UI 渲染 ---
+        // --- 5. UI 渲染邏輯 ---
         function renderAll() {
             document.getElementById('jackpot-display').innerText = state.jackpot.toLocaleString();
             document.getElementById('anno-text').innerText = state.anno;
             
-            ['002', '004'].forEach(code => {
-                const s = state.stocks[code];
-                if(!s) return;
-                const total = s.w + s.l;
-                const rate = total === 0 ? 0 : Math.round((s.w / total) * 100);
-                document.getElementById(`win-${code}`).innerText = s.w;
-                document.getElementById(`loss-${code}`).innerText = s.l;
-                document.getElementById(`rate-${code}`).innerText = rate + "%";
-            });
+            updateStockUI('002');
+            updateStockUI('004');
 
             const container = document.getElementById('games-container');
             if(container) {
                 container.innerHTML = state.games.map(g => `
-                    <div class="glass-card p-4 rounded-lg border border-white/5 cursor-pointer hover:border-[#d4af37]/30" onclick="window.openGameDetails(${g.id})">
-                        <div class="flex justify-between items-center mb-2">
-                            <span class="text-[10px] font-bold px-2 py-0.5 bg-white/10 rounded">${g.type}</span>
-                            <span class="text-[#d4af37] font-num">GAME ${g.id}</span>
+                    <div class="glass-card p-5 rounded-lg relative hover:bg-white/5 transition-all group border border-white/5 hover:border-[#d4af37]/30 cursor-pointer" onclick="window.openGameDetails(${g.id})">
+                        <div class="flex justify-between items-center mb-4 pointer-events-none">
+                            <span class="text-[10px] font-bold px-2 py-0.5 rounded tracking-wider ${g.type === 'PVP' ? 'badge-pvp' : 'badge-pve'}">${g.type}</span>
+                            <div class="text-right">
+                                 <span class="text-[#d4af37] font-serif italic text-xl font-bold font-num">Game ${g.id}</span>
+                            </div>
                         </div>
-                        <h3 class="font-bold text-white truncate">${g.name}</h3>
-                        <div class="flex justify-between items-center mt-3 pt-3 border-t border-white/5">
-                            <span class="text-[10px] text-gray-500">Entry Fee</span>
+                        <h3 class="text-white font-bold text-lg mb-1 truncate pointer-events-none">${g.name}</h3>
+                        <div class="flex justify-between text-xs text-gray-400 mb-4 pb-3 border-b border-white/10 items-center pointer-events-none">
+                            <span class="uppercase tracking-widest text-[10px]">Entry Fee</span>
                             <span class="text-[#d4af37] font-num text-lg">${g.cost}</span>
                         </div>
-                        <button onclick="event.stopPropagation(); window.editGame(${g.id})" class="admin-el mt-3 w-full bg-white/5 text-[9px] py-1 rounded">修改</button>
+                        <p class="text-xs text-gray-400 leading-relaxed mb-4 h-10 overflow-hidden opacity-80 pointer-events-none">${g.desc}</p>
+                        <div class="bg-gradient-to-r from-[#d4af37]/10 to-transparent p-2 rounded-l border-l-2 border-[#d4af37] pointer-events-none">
+                            <div class="text-[9px] text-[#d4af37] font-bold uppercase mb-0.5 tracking-wider">Perfect Win</div>
+                            <div class="text-xs text-gray-300 truncate">${g.perfect}</div>
+                        </div>
+                        <button onclick="event.stopPropagation(); window.editGame(${g.id})" class="admin-el absolute top-4 right-4 text-gray-600 hover:text-white bg-black/50 w-6 h-6 rounded-full items-center justify-center z-10"><i class="fa-solid fa-pen text-[10px]"></i></button>
                     </div>
                 `).join('');
             }
         }
 
+        function updateStockUI(code) {
+            const s = state.stocks[code];
+            if(!s) return;
+            const total = s.w + s.l;
+            const rate = total === 0 ? 0 : Math.round((s.w / total) * 100);
+            
+            document.getElementById(`win-${code}`).innerText = s.w;
+            document.getElementById(`loss-${code}`).innerText = s.l;
+            document.getElementById(`rate-${code}`).innerText = rate + "%";
+
+            const statusText = document.getElementById(`stock-status-text-${code}`);
+            const card = document.getElementById(`stock-${code}-card`);
+            let displayText = "WAITING", colorClass = "text-gray-600", borderClass = "";
+
+            if (total < 5) { displayText = "流局 (REFUND)"; colorClass = "text-gray-500"; }
+            else if (rate >= 80) { displayText = "瘋牛 (+200%)"; colorClass = "text-green-400 neon-text-gold"; borderClass = "neon-border-green"; }
+            else if (rate >= 60) { displayText = "牛市 (+150)"; colorClass = "text-green-500"; }
+            else if (rate >= 40) { displayText = "震盪 (-5%)"; colorClass = "text-yellow-500"; }
+            else { displayText = "崩盤 (-50%)"; colorClass = "text-red-600 neon-text-red"; borderClass = "neon-border-red"; }
+
+            statusText.innerText = displayText;
+            statusText.className = `text-2xl font-bold tracking-widest ${colorClass}`;
+            card.classList.remove('neon-border-green', 'neon-border-red', 'settle-flash');
+            if(state.stockState === 'SETTLED' && borderClass) {
+                card.classList.add(borderClass, 'settle-flash');
+            }
+        }
+
+        // --- 計時器迴圈 ---
         function startLoop() {
             setInterval(() => {
                 const now = window.getSyncedNow(); 
-                document.getElementById('timer-display').innerText = formatTime(state.lotteryEndTime - now);
-                const sDiff = state.stockEndTime - now;
-                const sStr = sDiff <= 0 ? "SETTLED" : formatTime(sDiff);
-                document.querySelectorAll('.stock-shared-timer').forEach(el => el.innerText = sStr);
+                
+                // 彩票計時
+                let lDiff = state.lotteryEndTime - now;
+                const lTimerEl = document.getElementById('timer-display');
+                const lStatusEl = document.getElementById('lottery-status-badge');
+                if (lDiff <= 0) {
+                    lTimerEl.innerText = "00:00";
+                    lStatusEl.innerText = "SETTLING...";
+                } else {
+                    lTimerEl.innerText = formatTime(lDiff);
+                    lStatusEl.innerText = lDiff < 300000 ? "FROZEN" : "OPEN FOR BET";
+                    lStatusEl.className = lDiff < 300000 ? "status-badge frozen" : "status-badge open";
+                }
+
+                // 股票計時
+                let sDiff = state.stockEndTime - now;
+                const timeStr = sDiff <= 0 ? "SETTLED" : formatTime(sDiff);
+                document.querySelectorAll('.stock-shared-timer').forEach(el => el.innerText = timeStr);
+                const mainTimer = document.getElementById('stock-timer-display');
+                if(mainTimer) mainTimer.innerText = timeStr;
             }, 1000);
         }
 
         function formatTime(ms) {
-            if(ms <= 0) return "00:00";
             const m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000);
             return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
         }
 
-        // 導出全局函數
+        // --- 導出全局函數 ---
+        window.setTab = (t) => {
+            const btns = document.querySelectorAll('.tab-btn');
+            btns.forEach(b => b.classList.remove('active'));
+            if(t === 'dashboard') {
+                document.getElementById('view-dashboard').className = "view-section view-active";
+                document.getElementById('view-games').className = "view-section view-inactive";
+                btns[0].classList.add('active');
+            } else {
+                document.getElementById('view-dashboard').className = "view-section view-inactive";
+                document.getElementById('view-games').className = "view-section view-active";
+                btns[1].classList.add('active');
+            }
+        };
+
         window.openGameDetails = (id) => {
             const g = state.games.find(x => x.id === id);
             if(!g) return;
             document.getElementById('modal-title').innerText = g.name;
+            document.getElementById('modal-cost').innerText = g.cost;
+            document.getElementById('modal-location').innerText = g.location || '待定';
             document.getElementById('modal-desc').innerText = g.desc;
-            document.getElementById('modal-perfect').innerText = g.perfect || "無";
+            document.getElementById('modal-perfect').innerText = g.perfect;
             document.getElementById('app-body').classList.replace('modal-closed', 'modal-open');
         };
         window.closeGameDetails = () => document.getElementById('app-body').classList.replace('modal-open', 'modal-closed');
-        window.setTab = (t) => {
-            document.getElementById('view-dashboard').style.display = t === 'dashboard' ? 'block' : 'none';
-            document.getElementById('view-games').style.display = t === 'games' ? 'block' : 'none';
-        };
+
+        // 管理功能
         window.modLotteryTime = (m) => { state.lotteryEndTime += m * 60000; saveState(); };
+        window.resetLotteryTime = () => { state.lotteryEndTime = window.getSyncedNow() + 1800000; saveState(); };
         window.modStock = (code, type, val) => { state.stocks[code][type] += val; if(state.stocks[code][type]<0) state.stocks[code][type]=0; saveState(); };
-        window.editAnno = () => { const n = prompt("公告內容:", state.anno); if(n) { state.anno = n; saveState(); } };
+        window.resetStockTime = () => {
+            if(confirm('重置所有股票數據？')) {
+                state.stockEndTime = window.getSyncedNow() + 2100000;
+                state.stocks = { '002': { w: 0, l: 0 }, '004': { w: 0, l: 0 } };
+                state.stockState = 'TRADING';
+                saveState();
+            }
+        };
+        window.editAnno = () => { const n = prompt("公告:", state.anno); if(n) { state.anno = n; saveState(); } };
         window.editGame = (id) => {
             const g = state.games.find(x => x.id === id);
             const fee = prompt("費用:", g.cost);
@@ -192,18 +267,18 @@
         window.attemptLogin = () => {
             if(prompt("KEY:") === CONFIG.adminPass) { 
                 document.body.classList.add('is-admin'); 
-                alert("管理員模式已啟動");
+                alert("ADMIN MODE ACTIVE");
             }
         };
 
         function getInitialGames() {
             return [
-                { id: 1, type: 'PVP', name: '石頭剪刀布大師', desc: '不留餘牌，平局扣費。', perfect: '比分 5:1' },
-                { id: 2, type: 'PVE', name: '雙峰塔硬幣', desc: '拿走最後一枚者勝。', perfect: '贏過 NPC' },
-                { id: 3, type: 'PVE', name: '拋水瓶挑戰', desc: '限時1分鐘，穩定立瓶。', perfect: '連中 5 次' },
-                { id: 4, type: 'PVP', name: '盲人打擊', desc: '蒙眼擊中對手得分。', perfect: '3:0 完勝' },
-                { id: 5, type: 'SOLO', name: '紅繩陣特工', desc: '穿越紅繩不響鈴。', perfect: '一次不失誤' },
-                { id: 10, type: 'PVP', name: '諸葛亮兵法', desc: '分配兵力佔領三城。', perfect: '3:0 佔領' }
+                { id: 1, type: 'PVP', name: '石頭剪刀布破產大師', cost: '動態', location: '待定', desc: '嚴格進行6輪，卡片必須用完。平局各扣50，下一輪贏家通吃。', perfect: '比分 5:1 或 6:0' },
+                { id: 2, type: 'PVE', name: '雙峰塔硬幣挑戰', cost: '200', location: '待定', desc: '桌上兩堆硬幣，單取或雙取。拿走最後一枚硬幣者勝。', perfect: '不買 Add-on 贏過 Committee' },
+                { id: 3, type: 'PVE', name: '拋水瓶轉生', cost: '200', location: '待定', desc: '限時1分鐘，旋轉立起瓶子次數多者勝。', perfect: '連中 5 次' },
+                { id: 4, type: 'PVP', name: '重生之我變成瞎子', cost: '動態', location: '待定', desc: '蒙眼原地轉3圈，擊中對手得分。先得3分者勝。', perfect: '3:0 完勝' },
+                { id: 5, type: 'SOLO', name: '特工紅繩陣', cost: '200', location: '待定', desc: '穿越掛滿鈴鐺的紅繩陣。觸碰鈴鐺發出聲響即失敗。', perfect: '一次不失誤穿過' },
+                { id: 10, type: 'PVP', name: '諸葛亮兵法', cost: '動態', location: '待定', desc: '100兵力分配三城。多者佔領。佔領2座以上勝。', perfect: '3:0 佔領全城' }
             ];
         }
 
@@ -212,96 +287,201 @@
     </script>
 
     <style>
-        :root { --gold: #d4af37; --bg: #050505; }
-        body { background: var(--bg); color: #eee; font-family: 'Noto Serif SC', serif; }
-        .font-num { font-family: 'Oswald', sans-serif; }
-        .glass-card { background: rgba(30,30,30,0.8); backdrop-filter: blur(10px); }
-        .dashboard-card { background: #111; border: 1px solid rgba(212,175,55,0.15); box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+        :root { 
+            --gold-main: #d4af37; 
+            --gold-light: #f9d976; 
+            --gold-dark: #8d7026; 
+            --bg-dark: #050505; 
+            --bg-card: rgba(20, 20, 20, 0.7);
+        }
+        
+        body { 
+            background-color: var(--bg-dark);
+            background-image: radial-gradient(circle at 50% 0%, #1a1a1a 0%, #050505 80%);
+            color: #e5e5e5; 
+            font-family: 'Noto Serif SC', serif; 
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .font-num { font-family: 'Oswald', sans-serif; letter-spacing: 0.05em; }
+        .glass-card { background: var(--bg-card); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.08); box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5); }
+        .dashboard-card { background: linear-gradient(180deg, rgba(30,30,30,0.8) 0%, rgba(10,10,10,0.9) 100%); border: 1px solid rgba(212, 175, 55, 0.15); position: relative; overflow: hidden; }
+        .neon-text-gold { text-shadow: 0 0 10px rgba(212, 175, 55, 0.5); }
+        .neon-border-green { border-color: rgba(34, 197, 94, 0.5); box-shadow: 0 0 15px rgba(34, 197, 94, 0.2); }
+        .neon-border-red { border-color: rgba(239, 68, 68, 0.5); box-shadow: 0 0 15px rgba(239, 68, 68, 0.2); }
+
         body:not(.is-admin) .admin-el { display: none !important; }
-        #connection-status { position: fixed; bottom: 10px; left: 10px; font-size: 10px; font-family: monospace; padding: 2px 8px; border-radius: 4px; background: rgba(0,0,0,0.7); z-index: 1000; }
-        .live-text { color: #4ade80; }
-        .error-text { color: #ff4444; font-weight: bold; animation: pulse 1s infinite; }
-        @keyframes pulse { 50% { opacity: 0.5; } }
-        .modal-open #game-modal { display: flex; }
-        .modal-closed #game-modal { display: none; }
+
+        .tab-btn { position: relative; opacity: 0.6; transition: 0.3s; }
+        .tab-btn.active { opacity: 1; color: var(--gold-main); text-shadow: 0 0 15px rgba(212, 175, 55, 0.4); }
+        .tab-btn.active::after { content: ''; position: absolute; bottom: -4px; left: 0; width: 100%; height: 2px; background: var(--gold-main); box-shadow: 0 0 10px var(--gold-main); }
+
+        .view-section { position: absolute; inset: 0; padding: 1rem 1rem 10rem; transition: 0.5s cubic-bezier(0.32, 0.72, 0, 1); overflow-y: auto; }
+        .view-active { opacity: 1; transform: scale(1); pointer-events: auto; z-index: 10; }
+        .view-inactive { opacity: 0; transform: scale(0.95); pointer-events: none; z-index: 0; }
+
+        #game-modal { transition: opacity 0.3s; }
+        .modal-open #game-modal { opacity: 1; pointer-events: auto; }
+        .modal-closed #game-modal { opacity: 0; pointer-events: none; }
+
+        .badge-pvp { background: rgba(153, 27, 27, 0.2); color: #fca5a5; border: 1px solid rgba(153, 27, 27, 0.4); }
+        .badge-pve { background: rgba(30, 64, 175, 0.2); color: #93c5fd; border: 1px solid rgba(30, 64, 175, 0.4); }
+        
+        .status-badge { display: inline-block; px-3 py-1 rounded text-[10px] font-bold tracking-widest mb-2; }
+        .status-badge.open { background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid #166534; }
+        .status-badge.frozen { background: rgba(153, 27, 27, 0.2); color: #fca5a5; border: 1px solid #991b1b; }
+
+        .settle-flash { animation: flash 1s infinite alternate; }
+        @keyframes flash { from { border-color: var(--gold-main); } to { border-color: transparent; } }
+
+        #connection-status { position: fixed; bottom: 10px; left: 10px; font-size: 9px; font-family: monospace; z-index: 1000; padding: 2px 6px; background: rgba(0,0,0,0.7); border-radius: 4px; }
+        .live-info { color: #4ade80; }
+        .error-info { color: #ef4444; font-weight: bold; }
     </style>
 </head>
 <body class="h-screen flex flex-col overflow-hidden modal-closed" id="app-body">
 
-    <header class="h-16 px-6 flex justify-between items-center border-b border-white/5 bg-black z-50">
-        <div class="flex items-center gap-2 cursor-pointer" onclick="window.attemptLogin()">
-            <i class="fa-solid fa-coins text-[#d4af37]"></i>
-            <h1 class="text-lg font-bold font-num tracking-wider">初火錢莊</h1>
+    <!-- Header -->
+    <header class="h-16 px-6 flex justify-between items-center border-b border-white/5 bg-black/60 backdrop-blur-md z-50">
+        <div class="flex items-center gap-3 cursor-pointer" onclick="window.c=window.c?window.c+1:1; if(window.c>=5) window.attemptLogin()">
+            <i class="fa-solid fa-coins text-[#d4af37] text-xl"></i>
+            <h1 class="text-xl font-bold tracking-[0.2em] font-num uppercase">初火錢莊</h1>
         </div>
-        <nav class="flex gap-6 text-xs font-bold uppercase tracking-widest">
-            <button onclick="window.setTab('dashboard')">Market</button>
-            <button onclick="window.setTab('games')">Games</button>
-            <button onclick="window.attemptLogin()"><i class="fa-solid fa-gear text-gray-600"></i></button>
+        <nav class="flex gap-8 text-sm font-bold items-center">
+            <button onclick="window.setTab('dashboard')" class="tab-btn active uppercase tracking-widest">大盤監控</button>
+            <button onclick="window.setTab('games')" class="tab-btn uppercase tracking-widest">遊戲手冊</button>
+            <button onclick="window.attemptLogin()" class="text-gray-600 hover:text-white"><i class="fa-solid fa-user-gear"></i></button>
         </nav>
     </header>
 
-    <main class="flex-1 relative p-4 overflow-y-auto">
-        <section id="view-dashboard">
-            <div class="bg-black/60 p-3 mb-6 text-sm text-[#d4af37] border border-[#d4af37]/10 rounded flex items-center gap-3">
-                <span class="animate-pulse text-xs">●</span>
-                <p id="anno-text" class="truncate">系統同步中...</p>
+    <!-- Main Content -->
+    <main class="flex-1 relative">
+        
+        <!-- DASHBOARD VIEW -->
+        <section id="view-dashboard" class="view-section view-active">
+            <!-- Ticker -->
+            <div class="w-full bg-black/40 border border-[#d4af37]/20 rounded p-2 mb-8 flex items-center max-w-7xl mx-auto">
+                <div class="bg-[#d4af37]/10 px-3 py-1 rounded text-xs text-[#d4af37] font-bold mr-3">LIVE FEED</div>
+                <p id="anno-text" class="text-sm text-[#d4af37]/90 truncate">載入數據庫中...</p>
             </div>
-            
-            <div class="max-w-4xl mx-auto space-y-6">
-                <div class="dashboard-card rounded-2xl p-8 text-center relative overflow-hidden">
-                    <div class="absolute top-0 left-0 w-full h-1 bg-[#d4af37]"></div>
-                    <p class="text-[10px] text-[#d4af37] tracking-[0.5em] mb-2 uppercase">Current Jackpot</p>
-                    <span class="text-5xl font-black font-num text-white tracking-tighter" id="jackpot-display">--</span>
-                    <div class="mt-8 flex justify-between items-end border-t border-white/5 pt-4">
-                        <div class="text-left text-xs font-bold text-gray-300">STATUS: WAITING</div>
-                        <div class="text-right text-2xl font-num text-white" id="timer-display">--:--</div>
+
+            <div class="max-w-7xl mx-auto space-y-8 pb-20">
+                <!-- Lottery Card -->
+                <div class="dashboard-card rounded-2xl p-6 text-center">
+                    <div class="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10"></div>
+                    <div class="relative z-10 grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
+                        <div>
+                            <p class="text-[10px] text-[#d4af37] tracking-[0.4em] mb-2 uppercase opacity-80">Lottery Jackpot</p>
+                            <span class="text-2xl text-[#d4af37]/80 font-light">¥</span>
+                            <span id="jackpot-display" class="text-5xl font-black text-white font-num neon-text-gold tracking-tighter">--</span>
+                        </div>
+                        <div class="h-24 bg-black/40 rounded-lg border border-white/5 flex items-center justify-center">
+                             <span class="text-xs text-gray-500 tracking-[0.3em] uppercase">開獎結果同步中</span>
+                        </div>
+                        <div>
+                            <div id="lottery-status-badge" class="status-badge open">WAITING</div>
+                            <div class="text-[10px] text-gray-400 mb-1 tracking-widest uppercase">Next Draw</div>
+                            <div id="timer-display" class="font-num text-4xl text-white font-bold">--:--</div>
+                        </div>
                     </div>
                 </div>
 
-                <div class="grid grid-cols-2 gap-4">
-                    <div id="stock-002-card" class="dashboard-card rounded-xl p-5">
-                        <div class="flex justify-between font-num"><span>002</span><span id="rate-002" class="text-[#d4af37]">--</span></div>
-                        <div class="grid grid-cols-2 gap-2 mt-4 text-center">
-                            <div class="bg-white/5 p-2 rounded"><p class="text-[8px] text-green-500">WIN</p><p id="win-002" class="font-num">0</p></div>
-                            <div class="bg-white/5 p-2 rounded"><p class="text-[8px] text-red-500">LOSS</p><p id="loss-002" class="font-num">0</p></div>
+                <!-- Stock Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- Stock 002 -->
+                    <div id="stock-002-card" class="dashboard-card rounded-2xl p-6 transition-all duration-500">
+                        <div class="flex justify-between items-start mb-6">
+                            <div><p class="text-[10px] text-gray-500 tracking-widest">STOCK CODE</p><p class="text-4xl font-black italic font-num">002</p></div>
+                            <div class="text-right"><p class="text-[10px] text-gray-500 tracking-widest">WIN RATE</p><p id="rate-002" class="text-3xl font-bold text-[#d4af37] font-num">0%</p></div>
                         </div>
-                        <p class="stock-shared-timer text-center text-[10px] text-gray-600 mt-4 font-num tracking-widest">--:--</p>
+                        <div class="flex items-center justify-center py-4 bg-black/30 rounded border border-white/5">
+                            <div id="stock-status-text-002" class="text-2xl font-bold text-gray-600 tracking-widest">WAITING</div>
+                        </div>
+                        <div class="flex justify-between items-end mt-6 pt-4 border-t border-white/5">
+                            <div class="font-num text-sm space-x-4">
+                                <span class="text-green-500 font-bold">W <span id="win-002">0</span></span>
+                                <span class="text-red-500 font-bold">L <span id="loss-002">0</span></span>
+                            </div>
+                            <div id="stock-timer-display" class="font-num text-xl text-white">--:--</div>
+                        </div>
                     </div>
-                    <div id="stock-004-card" class="dashboard-card rounded-xl p-5">
-                        <div class="flex justify-between font-num"><span>004</span><span id="rate-004" class="text-[#d4af37]">--</span></div>
-                        <div class="grid grid-cols-2 gap-2 mt-4 text-center">
-                            <div class="bg-white/5 p-2 rounded"><p class="text-[8px] text-green-500">WIN</p><p id="win-004" class="font-num">0</p></div>
-                            <div class="bg-white/5 p-2 rounded"><p class="text-[8px] text-red-500">LOSS</p><p id="loss-004" class="font-num">0</p></div>
+                    <!-- Stock 004 -->
+                    <div id="stock-004-card" class="dashboard-card rounded-2xl p-6 transition-all duration-500">
+                        <div class="flex justify-between items-start mb-6">
+                            <div><p class="text-[10px] text-gray-500 tracking-widest">STOCK CODE</p><p class="text-4xl font-black italic font-num">004</p></div>
+                            <div class="text-right"><p class="text-[10px] text-gray-500 tracking-widest">WIN RATE</p><p id="rate-004" class="text-3xl font-bold text-[#d4af37] font-num">0%</p></div>
                         </div>
-                        <p class="stock-shared-timer text-center text-[10px] text-gray-600 mt-4 font-num tracking-widest">--:--</p>
+                        <div class="flex items-center justify-center py-4 bg-black/30 rounded border border-white/5">
+                            <div id="stock-status-text-004" class="text-2xl font-bold text-gray-600 tracking-widest">WAITING</div>
+                        </div>
+                        <div class="flex justify-between items-end mt-6 pt-4 border-t border-white/5">
+                            <div class="font-num text-sm space-x-4">
+                                <span class="text-green-500 font-bold">W <span id="win-004">0</span></span>
+                                <span class="text-red-500 font-bold">L <span id="loss-004">0</span></span>
+                            </div>
+                            <div class="font-num text-xl text-white stock-shared-timer">--:--</div>
+                        </div>
                     </div>
                 </div>
             </div>
         </section>
 
-        <section id="view-games" style="display:none">
-            <div id="games-container" class="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-4 pb-20"></div>
+        <!-- GAMES VIEW -->
+        <section id="view-games" class="view-section view-inactive">
+            <div id="games-container" class="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 pb-20"></div>
         </section>
     </main>
 
-    <div id="game-modal" class="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center p-4">
-        <div class="bg-[#111] border border-[#d4af37]/30 w-full max-w-md rounded-2xl p-6 relative">
-            <button onclick="window.closeGameDetails()" class="absolute top-4 right-4 text-gray-500 hover:text-white"><i class="fa-solid fa-xmark text-xl"></i></button>
-            <h2 id="modal-title" class="text-2xl font-bold text-white mb-6"></h2>
-            <div class="space-y-4">
-                <div><p class="text-[10px] text-[#d4af37] font-bold uppercase tracking-widest">Rules</p><p id="modal-desc" class="text-sm text-gray-300 leading-relaxed whitespace-pre-line"></p></div>
-                <div class="bg-green-900/20 p-4 rounded-xl border border-green-500/20">
-                    <p class="text-[10px] text-green-500 font-bold uppercase tracking-widest">Perfect Win</p>
-                    <p id="modal-perfect" class="text-sm text-green-200"></p>
+    <!-- Detail Modal -->
+    <div id="game-modal" class="fixed inset-0 z-[100] bg-black/95 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-[#111] border border-[#d4af37]/30 w-full max-w-2xl rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.8)] overflow-hidden">
+            <div class="bg-gradient-to-r from-[#d4af37]/20 to-transparent p-6 border-b border-white/5 flex justify-between">
+                <h2 id="modal-title" class="text-2xl font-bold text-white pr-8"></h2>
+                <button onclick="window.closeGameDetails()" class="text-gray-400 hover:text-white"><i class="fa-solid fa-xmark text-2xl"></i></button>
+            </div>
+            <div class="p-8 space-y-6 max-h-[70vh] overflow-y-auto">
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-white/5 p-4 rounded border border-white/10">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-widest mb-1">費用</p>
+                        <p id="modal-cost" class="text-xl font-num text-[#d4af37]"></p>
+                    </div>
+                    <div class="bg-white/5 p-4 rounded border border-white/10">
+                        <p class="text-[10px] text-gray-500 uppercase tracking-widest mb-1">地點</p>
+                        <p id="modal-location" class="text-lg text-gray-200"></p>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="text-[#d4af37] font-bold text-sm tracking-widest uppercase mb-3 border-l-2 border-[#d4af37] pl-3">規則</h3>
+                    <p id="modal-desc" class="text-gray-300 text-sm leading-relaxed whitespace-pre-line"></p>
+                </div>
+                <div class="bg-green-900/10 border border-green-500/30 p-4 rounded-xl">
+                    <h3 class="text-green-500 font-bold text-xs tracking-widest uppercase mb-2">完勝條件</h3>
+                    <p id="modal-perfect" class="text-green-200 text-sm font-bold"></p>
                 </div>
             </div>
         </div>
     </div>
 
-    <footer class="admin-el fixed bottom-0 w-full bg-black p-4 border-t border-[#d4af37]/40 grid grid-cols-3 gap-2 z-50">
-        <button onclick="window.modLotteryTime(5)" class="bg-gray-900 py-3 text-[10px] rounded border border-white/5">+5m</button>
-        <button onclick="window.modStock('002','w',1)" class="bg-green-900/20 py-3 text-[10px] rounded border border-green-500/20">002 WIN</button>
-        <button onclick="window.editAnno()" class="bg-blue-900/20 py-3 text-[10px] rounded border border-blue-500/20">ANNO</button>
+    <!-- Admin Console -->
+    <footer class="admin-el fixed bottom-0 w-full bg-black/95 p-6 border-t border-[#d4af37]/50 grid grid-cols-3 gap-6 z-50">
+        <div class="space-y-3">
+            <button onclick="window.modLotteryTime(5)" class="w-full bg-gray-900 py-3 text-xs rounded border border-white/10 hover:bg-gray-800">+5m Lottery</button>
+            <button onclick="window.editAnno()" class="w-full bg-blue-900/20 text-blue-400 py-3 text-xs rounded border border-blue-900/30">修改公告</button>
+        </div>
+        <div class="space-y-3">
+            <div class="flex gap-2">
+                <button onclick="window.modStock('002','w',1)" class="flex-1 bg-green-900/20 py-2 text-[10px] rounded text-green-500 border border-green-900/30">002 W</button>
+                <button onclick="window.modStock('004','w',1)" class="flex-1 bg-green-900/20 py-2 text-[10px] rounded text-green-500 border border-green-900/30">004 W</button>
+            </div>
+            <button onclick="window.resetStockTime()" class="w-full bg-red-900/20 text-red-400 py-2 text-[10px] rounded border border-red-900/30">重置所有股票</button>
+        </div>
+        <div class="space-y-3 font-num">
+             <div class="flex gap-2">
+                <input id="input-jackpot" type="number" class="w-1/2 bg-black border border-white/10 rounded px-2 text-xs text-white" placeholder="Amount">
+                <button onclick="const v=document.getElementById('input-jackpot').value; if(v){state.jackpot=parseInt(v); saveState();}" class="flex-1 bg-gray-800 text-[10px] rounded">SET POOL</button>
+             </div>
+             <button onclick="document.body.classList.remove('is-admin')" class="w-full bg-gray-700 py-3 text-xs rounded">LOCK</button>
+        </div>
     </footer>
     
     <div id="connection-status">INITIALIZING...</div>
