@@ -54,27 +54,44 @@
 
         let networkOffset = 0; 
         let currentUser = null;
+        let timeSynced = false;
 
-        // --- 3. Robust Time Sync Function ---
-        // 修正路徑：使用 6 段路徑 artifacts/{id}/public/data/system/timeCheck
+        // --- 3. Robust Time Sync Function with Timeout ---
         async function syncTimeWithFirestore() {
-            try {
+            if (!currentUser) return false;
+            
+            return new Promise(async (resolve) => {
                 const statusEl = document.getElementById('connection-status');
                 statusEl.innerText = "CALIBRATING TIME...";
-                
-                const timeDoc = doc(db, 'artifacts', currentAppId, 'public', 'data', 'system', 'timeCheck');
-                await setDoc(timeDoc, { t: serverTimestamp() });
-                const snap = await getDoc(timeDoc);
-                const serverTime = snap.data().t.toMillis();
-                const localTime = Date.now();
-                networkOffset = serverTime - localTime;
-                
-                console.log("Time Sync Complete. Offset:", networkOffset, "ms");
-                return true;
-            } catch (e) {
-                console.warn("Firestore time sync failed, using local clock.", e);
-                return false;
-            }
+
+                // 5 秒超時機制，防止卡死
+                const timeout = setTimeout(() => {
+                    console.warn("Time sync timed out. Using local clock.");
+                    statusEl.innerText = "TIME SYNC TIMEOUT (Using Local)";
+                    resolve(false);
+                }, 5000);
+
+                try {
+                    // 使用用戶唯一的 ID 避免寫入衝突
+                    const timeDoc = doc(db, 'artifacts', currentAppId, 'public', 'data', 'system', `timeCheck_${currentUser.uid}`);
+                    await setDoc(timeDoc, { t: serverTimestamp() });
+                    const snap = await getDoc(timeDoc);
+                    
+                    if (snap.exists() && snap.data().t) {
+                        const serverTime = snap.data().t.toMillis();
+                        const localTime = Date.now();
+                        networkOffset = serverTime - localTime;
+                        timeSynced = true;
+                        console.log("Time Sync Complete. Offset:", networkOffset, "ms");
+                    }
+                    clearTimeout(timeout);
+                    resolve(true);
+                } catch (e) {
+                    console.error("Time Sync Error:", e);
+                    clearTimeout(timeout);
+                    resolve(false);
+                }
+            });
         }
 
         window.getSyncedNow = () => Date.now() + networkOffset;
@@ -88,15 +105,17 @@
             try {
                 const cred = await signInAnonymously(auth);
                 currentUser = cred.user;
+                console.log("Authenticated as:", currentUser.uid);
             } catch (e) {
                 console.error("Auth Failed:", e);
                 statusEl.innerText = "AUTH ERROR: 請開啟 Firebase 匿名登錄";
                 return;
             }
 
-            // Step B: Time Sync
+            // Step B: Time Sync (Non-blocking enough with timeout)
             await syncTimeWithFirestore();
             
+            // Step C: Listen to State Changes
             onAuthStateChanged(auth, async (user) => {
                 if (user) {
                     currentUser = user;
@@ -118,7 +137,7 @@
             const statusEl = document.getElementById('connection-status');
             statusEl.innerText = "SYNCING DATA...";
 
-            // 修正路徑：使用 6 段路徑 artifacts/{id}/public/data/gameState/current
+            // 修正路徑：artifacts/{id}/public/data/gameState/current (6 segments)
             const docRef = doc(db, 'artifacts', currentAppId, 'public', 'data', 'gameState', 'current');
 
             onSnapshot(docRef, (docSnap) => {
@@ -133,7 +152,7 @@
                 }
             }, (error) => {
                 console.error("Firestore Error:", error);
-                statusEl.innerText = "DATABASE ERROR: 路徑段數錯誤或權限未開";
+                statusEl.innerText = "DATABASE ERROR: 請檢查 Firestore 權限規則";
             });
         }
 
