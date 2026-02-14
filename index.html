@@ -849,27 +849,17 @@ function finalizeLotteryDraw() {
   const r2 = COLORS[Math.floor(Math.random()*3)];
   const r3 = COLORS[Math.floor(Math.random()*3)];
 
-  // ✅ 2) 結果寫入：RESULT + lotteryResult（所有人同步看到同一組球）
   state.lotteryState = 'RESULT';
   state.lotteryResult = [r1, r2, r3];
   saveState();
 
-  // admin 自己本機也顯示（其他人會靠 onSnapshot renderAll() 顯示）
-  document.getElementById('draw-active').classList.add('hidden');
-  document.getElementById('draw-active').classList.remove('flex');
-  document.getElementById('draw-result').classList.remove('hidden');
-  document.getElementById('draw-result').classList.add('flex');
-
-  document.getElementById('r-ball-1').className = `mini-ball ${r1}`;
-  document.getElementById('r-ball-2').className = `mini-ball ${r2}`;
-  document.getElementById('r-ball-3').className = `mini-ball ${r3}`;
-
+  // ✅ UI 不在这里动，让 renderLotteryUIFromState() 去画
+  // ✅ 结果显示多久：改这里
   setTimeout(() => {
-    resetLotteryTime(); // 這裡會 saveState()（下面我也幫你改好）
-    document.getElementById('draw-result').classList.add('hidden');
-    document.getElementById('draw-placeholder').classList.remove('hidden');
-  }, 60000);
+    resetLotteryTime(); // 里面会 saveState()
+  }, 60000); // 60秒（你要更久就改）
 }
+
 
         function modLotteryTime(m) {
             if (!__isAdmin) { alert('Admin only'); return; }
@@ -1109,6 +1099,7 @@ renderAll();
     </script>
 </body>
 </html>
+
 
 
 
