@@ -3,10 +3,52 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>初火钱庄 & 赛事中心</title>
+    <title>初火钱庄 & 赛事中心 (LIVE)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;500;700;900&family=Oswald:wght@400;700&display=swap" rel="stylesheet">
+    
+    <!-- Firebase SDKs (Updated to v12.9.0 as requested) -->
+    <script type="module">
+        // Import the functions you need from the SDKs you need
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-analytics.js";
+        // Adding Auth and Firestore for game functionality
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-auth.js";
+        import { getFirestore, doc, onSnapshot, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
+
+        // Your web app's Firebase configuration
+        const userConfig = {
+            apiKey: "AIzaSyD0tDOe3lCgrT0ANIO87rlkigES_ivivfI",
+            authDomain: "pycamp-9d9bb.firebaseapp.com",
+            projectId: "pycamp-9d9bb",
+            storageBucket: "pycamp-9d9bb.firebasestorage.app",
+            messagingSenderId: "205817396545",
+            appId: "1:205817396545:web:6d1a48fba84c50b79f35c0",
+            measurementId: "G-HY0C949GMR"
+        };
+
+        // Fallback for Canvas environment (ignore this if running locally)
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : userConfig;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-game-room';
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const analytics = getAnalytics(app);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Global Access for Game Logic
+        window.db = db;
+        window.auth = auth;
+        window.doc = doc;
+        window.setDoc = setDoc;
+        window.updateDoc = updateDoc;
+        window.appId = appId;
+        window.signInWithCustomToken = signInWithCustomToken;
+        window.signInAnonymously = signInAnonymously;
+    </script>
+
     <style>
         :root { 
             --gold-main: #d4af37; 
@@ -141,6 +183,20 @@
             from { box-shadow: inset 0 0 0 rgba(255,255,255,0); }
             to { box-shadow: inset 0 0 50px rgba(212, 175, 55, 0.3); }
         }
+
+        /* Connecting Indicator */
+        #connection-status {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            font-size: 10px;
+            color: #4ade80;
+            z-index: 100;
+            font-family: monospace;
+            opacity: 0.5;
+            pointer-events: none;
+        }
+        #connection-status.offline { color: #ef4444; }
     </style>
 </head>
 <body class="h-screen flex flex-col overflow-hidden modal-closed" id="app-body">
@@ -171,7 +227,7 @@
             <div id="ticker-bar" class="w-full bg-black/40 border border-[#d4af37]/20 rounded-md p-2 mb-8 flex items-center shadow-[0_0_15px_rgba(212,175,55,0.05)] max-w-7xl mx-auto">
                 <div id="ticker-label" class="bg-[#d4af37]/10 px-3 py-1 rounded text-xs text-[#d4af37] font-bold mr-3 whitespace-nowrap">LIVE FEED</div>
                 <div class="flex-1 overflow-hidden relative h-5">
-                    <p id="anno-text" class="text-sm text-[#d4af37]/90 font-medium whitespace-nowrap absolute w-full truncate">初火钱庄交易系统已上线，请各位主帅前往各大站点进行博弈。</p>
+                    <p id="anno-text" class="text-sm text-[#d4af37]/90 font-medium whitespace-nowrap absolute w-full truncate">正在连接至初火钱庄系统...</p>
                 </div>
             </div>
 
@@ -188,7 +244,7 @@
                             <p class="text-[10px] text-[#d4af37] tracking-[0.4em] uppercase mb-2 opacity-80">Lottery Jackpot</p>
                             <div class="flex justify-center md:justify-start items-baseline gap-2">
                                 <span class="text-2xl text-[#d4af37]/80 font-light">¥</span>
-                                <span id="jackpot-display" class="text-5xl md:text-6xl font-black text-white font-num neon-text-gold tracking-tighter">0</span>
+                                <span id="jackpot-display" class="text-5xl md:text-6xl font-black text-white font-num neon-text-gold tracking-tighter">--</span>
                             </div>
                         </div>
                         <!-- Center -->
@@ -219,7 +275,7 @@
                         <div class="text-center md:text-right">
                             <div id="lottery-status-badge" class="inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 bg-gray-800 text-gray-500 border border-gray-700">WAITING</div>
                             <div class="text-[10px] text-gray-400 mb-1 tracking-widest">NEXT DRAW IN</div>
-                            <div id="timer-display" class="font-num text-4xl text-white font-bold">30:00</div>
+                            <div id="timer-display" class="font-num text-4xl text-white font-bold">--:--</div>
                         </div>
                     </div>
                 </div>
@@ -254,7 +310,7 @@
                                 </div>
                                 <div class="text-right">
                                     <div id="stock-timer-label" class="text-[10px] text-gray-500 mb-1">CYCLE TIMER (35m)</div>
-                                    <div id="stock-timer-display" class="font-num text-xl text-white">35:00</div>
+                                    <div id="stock-timer-display" class="font-num text-xl text-white">--:--</div>
                                 </div>
                             </div>
                         </div>
@@ -287,7 +343,7 @@
                                 </div>
                                 <div class="text-right">
                                     <div class="text-[10px] text-gray-500 mb-1">CYCLE TIMER</div>
-                                    <div class="font-num text-xl text-white stock-shared-timer">35:00</div>
+                                    <div class="font-num text-xl text-white stock-shared-timer">--:--</div>
                                 </div>
                             </div>
                         </div>
@@ -308,7 +364,7 @@
 
     </main>
 
-    <!-- Game Detail Modal -->
+    <!-- Game Detail Modal (New!) -->
     <div id="game-modal" class="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 pointer-events-none opacity-0">
         <div id="game-modal-content" class="bg-[#111] border border-[#d4af37]/30 w-full max-w-2xl rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.8)] overflow-hidden transform scale-90">
             <!-- Modal Header -->
@@ -414,39 +470,20 @@
             </div>
         </div>
     </footer>
+    
+    <div id="connection-status">INITIALIZING...</div>
 
-    <!-- Firebase SDKs -->
-    <script type="module">
-          // Import the functions you need from the SDKs you need
-          import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
-          import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-analytics.js";
-  // TODO: Add SDKs for Firebase products that you want to use
-  // https://firebase.google.com/docs/web/setup#available-libraries
-
-  // Your web app's Firebase configuration
-  // For Firebase JS SDK v7.20.0 and later, measurementId is optional
-          const firebaseConfig = {
-              apiKey: "AIzaSyD0tDOe3lCgrT0ANIO87rlkigES_ivivfI",
-              authDomain: "pycamp-9d9bb.firebaseapp.com",
-              projectId: "pycamp-9d9bb",
-              storageBucket: "pycamp-9d9bb.firebasestorage.app",
-              messagingSenderId: "205817396545",
-              appId: "1:205817396545:web:6d1a48fba84c50b79f35c0",
-              measurementId: "G-HY0C949GMR"
-  };
-
-  // Initialize Firebase
-  const app = initializeApp(firebaseConfig);
-  const analytics = getAnalytics(app);
-
+    <script>
         const CONFIG = {
-            adminPass: "8888",
+            adminPass: "8888", // Only for local admin console visibility, not DB security
             lotteryDuration: 30, // 30m
-            stockDuration: 35    // 35m
+            stockDuration: 35,   // 35m
+            DATA_VERSION: "2.3"
         };
 
-        // Local state acts as a buffer or fallback
-        window.state = {
+        // --- Default State for initialization ---
+        const DEFAULT_STATE = {
+            version: CONFIG.DATA_VERSION,
             anno: "初火钱庄交易系统已上线，请各位主帅前往各大站点进行博弈。",
             jackpot: 5000,
             lotteryEndTime: Date.now() + CONFIG.lotteryDuration * 60000,
@@ -455,91 +492,205 @@
             stockState: 'TRADING',
             stocks: { '002': { w: 0, l: 0 }, '004': { w: 0, l: 0 } },
             games: [
-                { id: 1, type: 'PVP', name: '重生之变成石头剪刀布大师却因为平局破产这档事', cost: '动态', location: '待定', desc: '1. 基础规则：至少6人参与。每队发6张卡（2石2剪2布）。\n2. 流程：严格进行6轮，卡片必须用完，不可保留。每轮结算后公开弃牌。\n3. 死锁与悬赏：若平局，双方各扣除50道（场地费），本轮奖金（150）不发，直接注入悬赏池。下一轮赢家通吃。\n4. 最终审判：若第6轮依然平局，悬赏池被系统强制回收，无人能得。', perfect: '比分 5:1 或 6:0 (抽奖x1)' },
-                { id: 2, type: 'PVE', name: '关于双峰塔不对等我打算开飞机把双峰塔撞了', cost: '200', location: '待定', desc: '1. 玩法：桌上有两堆硬币（左11，右18）。\n2. 操作：单取（拿走一堆中任意数量）或 双取（两堆同时拿走相同数量）。\n3. 胜利：拿走桌上最后一枚硬币者胜。\n4. 付费玩法：支付200可抢先手或指定先手。', perfect: '不买Add-on赢过Committee (抽奖x1)' },
-                { id: 3, type: 'PVE', name: '关于我转生变成水瓶还要被扔这档事', cost: '200', location: '待定', desc: '1. 玩法：抛水瓶，旋转一圈后稳稳站立。\n2. 胜利：限时1分钟，成功次数多者胜；或竞速模式先成功5次者胜。\n3. Add-on：150道让NPC需成功7次；300道让NPC需连续成功5次。', perfect: '不买Add-on赢过Committee (抽奖x1)' },
-                { id: 4, type: 'PVP', name: '重生之我变成瞎子', cost: '动态', location: '待定', desc: '1. 道具：海绵棒x2，眼罩x2。\n2. 玩法：戴眼罩原地转3圈迷失方向。依靠直觉或队友呼喊攻击。\n3. 判定：击中头部/躯干+1分，对手出界+1分。先得3分者胜。', perfect: '3:0 或 3:1 获胜 (抽奖x1)' },
-                { id: 5, type: 'SOLO', name: '重生之我变成特工007', cost: '200', location: '待定', desc: '1. 玩法：1人挑战。穿越挂满铃铛的红绳阵取物。\n2. 判定：身体触碰铃铛发出声响即失败。\n3. Pay-to-Win：支付200道可剪断一条红绳。', perfect: '一次不失误穿过整个阵仗 (抽奖x1)' },
-                { id: 6, type: 'PVP', name: '重生之我变成初音我婆', cost: '动态', location: '待定', desc: '1. 玩法：轮流抽取积木堆叠。若抽到指令积木（如“单脚站立抽”），必须执行。\n2. 判定：谁弄倒了塔，谁直接判负。\n3. 完胜：成功执行3次指令且塔未倒，或塔高度翻倍。', perfect: '执行3次指令且未倒 或 高度翻倍 (抽奖x1)' },
-                { id: 7, type: 'PVP', name: '重生之我变成人体投篮机这些事', cost: '动态', location: '待定', desc: '1. 核心：4人投球，1人用头接。\n2. 限制：接球者头上绑篮筐，只能动身/头，绝对不可用手碰篮筐。\n3. 判定：限时1分钟，接球多者胜。', perfect: '接住10颗球 (抽奖x1)' },
-                { id: 8, type: 'PVP', name: '重生之我变成拆弹专家', cost: '动态', location: '待定', desc: '1. 配置：指挥官（能看不能动）+ 拆弹员（戴眼罩能动）。\n2. 玩法：指挥官口头指挥拆弹员完成4x4拼图。\n3. 判定：先完成拼图者胜。', perfect: '60秒内完成 + 无废话/无肢体接触 (抽奖x1)' },
-                { id: 9, type: 'PVP', name: '重生之我变成井字棋魂', cost: '动态', location: '待定', desc: '1. 流程：10米折返跑接力下棋。\n2. 前3人：负责“放”标志物。\n3. 第4人起：若未分胜负，跑过去必须“移动”己方一个标志物。\n4. 判定：先连成三点一线者胜。', perfect: '前3人直接连成一线 (抽奖x1)' },
-                { id: 10, type: 'PVP/E', name: '重生之我变成诸葛亮', cost: '动态', location: '待定', desc: '1. 玩法：双方将100兵力分配给A、B、C三城。\n2. 判定：同时亮牌，兵力多者占城（相同平局）。\n3. 获胜：占领2座以上城池。\n4. 死局规则：若1胜1负1平，比较获胜城所耗兵力，兵力少者胜（以少胜多）。', perfect: '3:0 完胜 (抽奖x1)' },
-                { id: 11, type: 'PVP', name: '重生之我变成迪达拉', cost: '动态', location: '待定', desc: '1. 规则：轮流给气球打气，每回合必须按1~5下。\n2. 反转：若敢一次性按超过5下且气球没爆，可反转回合（让对方连按两轮）。\n3. 判定：气球爆炸者负。', perfect: '成功执行2次以上“反转”且获胜 (抽奖x1)' },
-                { id: 12, type: 'PVP', name: '重生之我变成狗', cost: '动态', location: '待定', desc: '1. 配置：7杯水，其中1杯是炸弹（醋/蛇草水）。\n2. 玩法：两队轮流选一杯一口闷。\n3. 判定：喝到炸弹者判负。但若喝完面无表情骗过对方（对方以为是水），则反杀获胜。', perfect: '喝炸弹骗过对方 或 首轮选中对方炸弹 (抽奖x1)' }
+                { 
+                    id: 1, 
+                    type: 'PVP', 
+                    name: '重生之变成石头剪刀布大师却因为平局破产这档事', 
+                    cost: '动态', 
+                    location: '待定', 
+                    desc: '1. 基础规则：至少6人参与。每队发6张卡（2石2剪2布）。\n2. 流程：严格进行6轮，卡片必须用完，不可保留。每轮结算后公开弃牌。\n3. 死锁与悬赏：若平局，双方各扣除50道（场地费），本轮奖金（150）不发，直接注入悬赏池。下一轮赢家通吃。\n4. 最终审判：若第6轮依然平局，悬赏池被系统强制回收，无人能得。', 
+                    perfect: '比分 5:1 或 6:0 (抽奖x1)' 
+                },
+                { 
+                    id: 2, 
+                    type: 'PVE', 
+                    name: '关于双峰塔不对等我打算开飞机把双峰塔撞了', 
+                    cost: '200', 
+                    location: '待定', 
+                    desc: '1. 玩法：桌上有两堆硬币（左11，右18）。\n2. 操作：单取（拿走一堆中任意数量）或 双取（两堆同时拿走相同数量）。\n3. 胜利：拿走桌上最后一枚硬币者胜。\n4. 付费玩法：支付200可抢先手或指定先手。', 
+                    perfect: '不买Add-on赢过Committee (抽奖x1)' 
+                },
+                { 
+                    id: 3, 
+                    type: 'PVE', 
+                    name: '关于我转生变成水瓶还要被扔这档事', 
+                    cost: '200', 
+                    location: '待定', 
+                    desc: '1. 玩法：抛水瓶，旋转一圈后稳稳站立。\n2. 胜利：限时1分钟，成功次数多者胜；或竞速模式先成功5次者胜。\n3. Add-on：150道让NPC需成功7次；300道让NPC需连续成功5次。', 
+                    perfect: '不买Add-on赢过Committee (抽奖x1)' 
+                },
+                { 
+                    id: 4, 
+                    type: 'PVP', 
+                    name: '重生之我变成瞎子', 
+                    cost: '动态', 
+                    location: '待定', 
+                    desc: '1. 道具：海绵棒x2，眼罩x2。\n2. 玩法：戴眼罩原地转3圈迷失方向。依靠直觉或队友呼喊攻击。\n3. 判定：击中头部/躯干+1分，对手出界+1分。先得3分者胜。', 
+                    perfect: '3:0 或 3:1 获胜 (抽奖x1)' 
+                },
+                { 
+                    id: 5, 
+                    type: 'SOLO', 
+                    name: '重生之我变成特工007', 
+                    cost: '200', 
+                    location: '待定', 
+                    desc: '1. 玩法：1人挑战。穿越挂满铃铛的红绳阵取物。\n2. 判定：身体触碰铃铛发出声响即失败。\n3. Pay-to-Win：支付200道可剪断一条红绳。', 
+                    perfect: '一次不失误穿过整个阵仗 (抽奖x1)' 
+                },
+                { 
+                    id: 6, 
+                    type: 'PVP', 
+                    name: '重生之我变成初音我婆', 
+                    cost: '动态', 
+                    location: '待定', 
+                    desc: '1. 玩法：轮流抽取积木堆叠。若抽到指令积木（如“单脚站立抽”），必须执行。\n2. 判定：谁弄倒了塔，谁直接判负。\n3. 完胜：成功执行3次指令且塔未倒，或塔高度翻倍。', 
+                    perfect: '执行3次指令且未倒 或 高度翻倍 (抽奖x1)' 
+                },
+                { 
+                    id: 7, 
+                    type: 'PVP', 
+                    name: '重生之我变成人体投篮机这些事', 
+                    cost: '动态', 
+                    location: '待定', 
+                    desc: '1. 核心：4人投球，1人用头接。\n2. 限制：接球者头上绑篮筐，只能动身/头，绝对不可用手碰篮筐。\n3. 判定：限时1分钟，接球多者胜。', 
+                    perfect: '接住10颗球 (抽奖x1)' 
+                },
+                { 
+                    id: 8, 
+                    type: 'PVP', 
+                    name: '重生之我变成拆弹专家', 
+                    cost: '动态', 
+                    location: '待定', 
+                    desc: '1. 配置：指挥官（能看不能动）+ 拆弹员（戴眼罩能动）。\n2. 玩法：指挥官口头指挥拆弹员完成4x4拼图。\n3. 判定：先完成拼图者胜。', 
+                    perfect: '60秒内完成 + 无废话/无肢体接触 (抽奖x1)' 
+                },
+                { 
+                    id: 9, 
+                    type: 'PVP', 
+                    name: '重生之我变成井字棋魂', 
+                    cost: '动态', 
+                    location: '待定', 
+                    desc: '1. 流程：10米折返跑接力下棋。\n2. 前3人：负责“放”标志物。\n3. 第4人起：若未分胜负，跑过去必须“移动”己方一个标志物。\n4. 判定：先连成三点一线者胜。', 
+                    perfect: '前3人直接连成一线 (抽奖x1)' 
+                },
+                { 
+                    id: 10, 
+                    type: 'PVP/E', 
+                    name: '重生之我变成诸葛亮', 
+                    cost: '动态', 
+                    location: '待定', 
+                    desc: '1. 玩法：双方将100兵力分配给A、B、C三城。\n2. 判定：同时亮牌，兵力多者占城（相同平局）。\n3. 获胜：占领2座以上城池。\n4. 死局规则：若1胜1负1平，比较获胜城所耗兵力，兵力少者胜（以少胜多）。', 
+                    perfect: '3:0 完胜 (抽奖x1)' 
+                },
+                { 
+                    id: 11, 
+                    type: 'PVP', 
+                    name: '重生之我变成迪达拉', 
+                    cost: '动态', 
+                    location: '待定', 
+                    desc: '1. 规则：轮流给气球打气，每回合必须按1~5下。\n2. 反转：若敢一次性按超过5下且气球没爆，可反转回合（让对方连按两轮）。\n3. 判定：气球爆炸者负。', 
+                    perfect: '成功执行2次以上“反转”且获胜 (抽奖x1)' 
+                },
+                { 
+                    id: 12, 
+                    type: 'PVP', 
+                    name: '重生之我变成狗', 
+                    cost: '动态', 
+                    location: '待定', 
+                    desc: '1. 配置：7杯水，其中1杯是炸弹（醋/蛇草水）。\n2. 玩法：两队轮流选一杯一口闷。\n3. 判定：喝到炸弹者判负。但若喝完面无表情骗过对方（对方以为是水），则反杀获胜。', 
+                    perfect: '喝炸弹骗过对方 或 首轮选中对方炸弹 (抽奖x1)' 
+                }
             ]
         };
 
-        // --- Firebase Integration ---
-        
-        async function initAuth() {
-            if (!auth) return;
-            try {
-                await signInAnonymously(auth);
-                setupRealtimeListener();
-            } catch (error) {
-                console.error("Auth Failed", error);
-            }
-        }
+        let state = JSON.parse(JSON.stringify(DEFAULT_STATE)); // Deep copy
+        let currentUser = null;
 
-        function setupRealtimeListener() {
-            if (!auth || !auth.currentUser) return;
-            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameState', 'main');
-            
-            // Listen to cloud changes
-            onSnapshot(docRef, (docSnap) => {
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    // Merge remote data into local state
-                    window.state = { ...window.state, ...data };
-                    // Handle complex merge for games array
-                    if(data.games) {
-                        window.state.games = window.state.games.map(def => {
-                            const saved = data.games.find(x => x.id === def.id);
-                            return saved ? { ...def, cost: saved.cost, location: saved.location || def.location } : def;
-                        });
-                    }
-                    renderAll();
-                } else {
-                    // Initialize cloud if empty
-                    pushState();
-                }
-            }, (error) => {
-                console.error("Sync Error", error);
-            });
-        }
-
-        function pushState() {
-            if (!auth || !auth.currentUser) return;
-            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameState', 'main');
-            setDoc(docRef, window.state).catch(e => console.error("Push Error", e));
-        }
-
-        // --- Core Logic ---
-
+        // --- Init & Auth ---
         function init() {
-            // Attach globals to window so inline HTML onclicks work (Fix for ReferenceError)
-            window.openGameDetails = openGameDetails;
-            window.closeGameDetails = closeGameDetails;
-            window.editGame = editGame;
-            window.attemptLogin = attemptLogin;
-            window.logoutAdmin = logoutAdmin;
-            window.setTab = setTab;
-            window.modLotteryTime = modLotteryTime;
-            window.resetLotteryTime = resetLotteryTime;
-            window.autoSettleLottery = autoSettleLottery;
-            window.modStockTime = modStockTime;
-            window.resetStockTime = resetStockTime;
-            window.modStock = modStock;
-            window.setJackpot = setJackpot;
-            window.editAnno = editAnno;
+            // Check for custom token provided by Canvas environment
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                window.signInWithCustomToken(window.auth, __initial_auth_token).catch(e => console.error("Auth Error:", e));
+            } else {
+                window.signInAnonymously(window.auth).catch(e => console.error("Auth Error:", e));
+            }
+
+            window.auth.onAuthStateChanged((user) => {
+                const statusEl = document.getElementById('connection-status');
+                if (user) {
+                    currentUser = user;
+                    statusEl.innerText = "ONLINE (ID: " + user.uid.substring(0,4) + ")";
+                    statusEl.classList.remove('offline');
+                    setupRealtimeListener();
+                } else {
+                    currentUser = null;
+                    statusEl.innerText = "OFFLINE";
+                    statusEl.classList.add('offline');
+                }
+            });
 
             renderAll();
             startLoop();
             setupAdminTrigger();
-            initAuth(); 
         }
 
+        // --- Realtime Sync Logic (Replaces loadState) ---
+        function setupRealtimeListener() {
+            if (!currentUser) return;
+            
+            // Use path compatible with user keys or local canvas
+            // If appId is 'default-game-room' (user hosted), we use a simple path
+            // If appId is provided by Canvas, we use the complex path
+            
+            let docRef;
+            if (window.appId === 'default-game-room') {
+                docRef = window.doc(window.db, 'gameData', 'globalState');
+            } else {
+                docRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'gameState');
+            }
+
+            window.onSnapshot(docRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const remoteState = docSnap.data();
+                    
+                    // Logic to merge remote state
+                    if (remoteState.version !== CONFIG.DATA_VERSION) {
+                         console.warn("Server version mismatch. Admin should reset.");
+                    }
+                    
+                    state = remoteState;
+                    renderAll(); // Re-render UI with new data
+                } else {
+                    // If document doesn't exist yet (first run), create it
+                    console.log("Initializing DB...");
+                    saveState();
+                }
+            }, (error) => {
+                console.error("Sync Error:", error);
+                document.getElementById('connection-status').innerText = "SYNC ERROR";
+            });
+        }
+
+        // --- Save Logic (Replaces localStorage) ---
+        async function saveState() {
+            if (!currentUser) return;
+            
+            let docRef;
+            if (window.appId === 'default-game-room') {
+                docRef = window.doc(window.db, 'gameData', 'globalState');
+            } else {
+                docRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'gameState');
+            }
+            
+            try {
+                await window.setDoc(docRef, state, { merge: true });
+            } catch (e) {
+                console.error("Save Failed:", e);
+                // Do not alert on every save failure to avoid spamming the user
+            }
+        }
+
+        // --- Rendering Logic (Mostly unchanged) ---
         function renderAll() {
             const ticker = document.getElementById('ticker-bar');
             const annoText = document.getElementById('anno-text');
@@ -556,7 +707,7 @@
             const container = document.getElementById('games-container');
             if(container) {
                 container.innerHTML = state.games.map(g => `
-                    <div class="glass-card p-5 rounded-lg relative hover:bg-white/5 transition-colors group border border-white/5 hover:border-[#d4af37]/30 cursor-pointer" onclick="window.openGameDetails(${g.id})">
+                    <div class="glass-card p-5 rounded-lg relative hover:bg-white/5 transition-colors group border border-white/5 hover:border-[#d4af37]/30 cursor-pointer" onclick="openGameDetails(${g.id})">
                         <div class="flex justify-between items-center mb-4 pointer-events-none">
                             <span class="text-[10px] font-bold px-2 py-0.5 rounded tracking-wider ${g.type === 'PVP' ? 'badge-pvp' : g.type === 'PVE' ? 'badge-pve' : 'badge-mixed'}">${g.type}</span>
                             <div class="text-right">
@@ -577,23 +728,26 @@
                         <div class="absolute bottom-4 right-4 text-[#d4af37] opacity-0 group-hover:opacity-100 transition text-xs flex items-center gap-1">
                             查看详情 <i class="fa-solid fa-arrow-right"></i>
                         </div>
-                        <button onclick="event.stopPropagation(); window.editGame(${g.id})" class="admin-el absolute top-4 right-4 text-gray-600 hover:text-white bg-black/50 w-6 h-6 rounded-full items-center justify-center z-10"><i class="fa-solid fa-pen text-xs"></i></button>
+                        <button onclick="event.stopPropagation(); editGame(${g.id})" class="admin-el absolute top-4 right-4 text-gray-600 hover:text-white bg-black/50 w-6 h-6 rounded-full items-center justify-center z-10"><i class="fa-solid fa-pen text-xs"></i></button>
                     </div>
                 `).join('');
             }
         }
 
-        // Expose functions explicitly to window
+        // === Modal Logic ===
         function openGameDetails(id) {
             const g = state.games.find(x => x.id === id);
             if(!g) return;
+
             document.getElementById('modal-type').innerText = g.type;
             document.getElementById('modal-type').className = `inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 border ${g.type === 'PVP' ? 'badge-pvp' : g.type === 'PVE' ? 'badge-pve' : 'badge-mixed'}`;
+            
             document.getElementById('modal-title').innerText = g.name;
             document.getElementById('modal-cost').innerText = g.cost;
             document.getElementById('modal-location').innerText = g.location || '待定';
             document.getElementById('modal-desc').innerText = g.desc;
             document.getElementById('modal-perfect').innerText = g.perfect;
+
             const body = document.getElementById('app-body');
             body.classList.remove('modal-closed');
             body.classList.add('modal-open');
@@ -605,16 +759,24 @@
             body.classList.add('modal-closed');
         }
 
-        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.closeGameDetails(); });
-        document.getElementById('game-modal').addEventListener('click', (e) => { if(e.target.id === 'game-modal') window.closeGameDetails(); });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeGameDetails();
+        });
+
+        document.getElementById('game-modal').addEventListener('click', (e) => {
+            if(e.target.id === 'game-modal') closeGameDetails();
+        });
 
         function updateStockUI(code) {
             const s = state.stocks[code];
             const total = s.w + s.l;
             const rate = total === 0 ? 0 : Math.round((s.w / total) * 100);
-            document.getElementById(`win-${code}`).innerText = s.w;
+            
+            const wEl = document.getElementById(`win-${code}`);
+            if(wEl) wEl.innerText = s.w;
             document.getElementById(`loss-${code}`).innerText = s.l;
             document.getElementById(`rate-${code}`).innerText = rate + "%";
+
             const statusText = document.getElementById(`stock-status-text-${code}`);
             const card = document.getElementById(`stock-${code}-card`);
             
@@ -643,6 +805,7 @@
 
             statusText.innerText = displayText;
             statusText.className = `text-2xl font-bold tracking-widest ${colorClass}`;
+            
             card.classList.remove('neon-border-green', 'neon-border-red');
             if(state.stockState === 'SETTLED' && borderClass) {
                  card.classList.add(borderClass);
@@ -655,19 +818,21 @@
         function startLoop() {
             setInterval(() => {
                 const now = Date.now();
-                // Lottery Timer
+                
+                // Lottery
                 let lDiff = state.lotteryEndTime - now;
                 const lStatusEl = document.getElementById('lottery-status-badge');
                 const lTimerEl = document.getElementById('timer-display');
+
                 if (lDiff <= 0) {
-                    if (state.lotteryState !== 'DRAWING') window.autoSettleLottery();
+                    if (state.lotteryState !== 'DRAWING') autoSettleLottery(); // Local trigger, but state logic protects recursion
                     lTimerEl.innerText = "00:00";
                 } else {
                     const m = Math.floor(lDiff / 60000);
                     const s = Math.floor((lDiff % 60000) / 1000);
                     lTimerEl.innerText = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
                     if (m < 5) {
-                        state.lotteryState = 'FROZEN';
+                        state.lotteryState = 'FROZEN'; // This is visual only until synced
                         lStatusEl.innerText = "FROZEN (CLOSED)";
                         lStatusEl.className = "inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 bg-red-900/30 text-red-400 border border-red-900";
                     } else {
@@ -676,13 +841,14 @@
                         lStatusEl.className = "inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 bg-green-900/30 text-green-400 border border-green-900 shadow-[0_0_10px_rgba(34,197,94,0.3)]";
                     }
                 }
-                // Stock Timer
+
+                // Stocks
                 let sDiff = state.stockEndTime - now;
                 const sTimers = document.querySelectorAll('.stock-shared-timer');
                 const sTimerDisplay = document.getElementById('stock-timer-display');
-                const formattedTime = formatTime(sDiff);
-                if(sTimerDisplay) sTimerDisplay.innerText = formattedTime;
-                sTimers.forEach(el => el.innerText = formattedTime);
+                if(sTimerDisplay) sTimerDisplay.innerText = formatTime(sDiff);
+                sTimers.forEach(el => el.innerText = formatTime(sDiff));
+
                 if (sDiff <= 0) {
                     state.stockState = 'SETTLED';
                     updateStockUI('002');
@@ -705,18 +871,25 @@
 
         const COLORS = ['ball-red', 'ball-green', 'ball-blue'];
 
+        // Modified: Only Admin or timer trigger calls this, but visual is local.
+        // In a real backend, the server would calculate the result.
+        // Here, we trust the client logic (or the Admin's client logic) for visual effects.
         function autoSettleLottery() {
-            state.lotteryState = 'DRAWING';
+            // Only play animation if we haven't seen it recently or state implies it
+            // For simplicity, we just play it.
+            
             document.getElementById('draw-placeholder').classList.add('hidden');
             document.getElementById('draw-result').classList.add('hidden');
             document.getElementById('draw-active').classList.remove('hidden');
             document.getElementById('draw-active').classList.add('flex');
+            
             const interval = setInterval(() => {
                 const balls = document.querySelectorAll('#draw-active .mini-ball');
                 balls.forEach(b => {
                     b.className = `mini-ball ${COLORS[Math.floor(Math.random()*3)]} ball-anim`;
                 });
             }, 100);
+
             setTimeout(() => {
                 clearInterval(interval);
                 finalizeLotteryDraw();
@@ -727,46 +900,63 @@
             const r1 = COLORS[Math.floor(Math.random()*3)];
             const r2 = COLORS[Math.floor(Math.random()*3)];
             const r3 = COLORS[Math.floor(Math.random()*3)];
+
             document.getElementById('draw-active').classList.add('hidden');
             document.getElementById('draw-active').classList.remove('flex');
             document.getElementById('draw-result').classList.remove('hidden');
             document.getElementById('draw-result').classList.add('flex');
+
             document.getElementById('r-ball-1').className = `mini-ball ${r1}`;
             document.getElementById('r-ball-2').className = `mini-ball ${r2}`;
             document.getElementById('r-ball-3').className = `mini-ball ${r3}`;
+
+            // We only reset logic if we are admin or if data sync triggers it
+            // For pure visual flow:
             setTimeout(() => {
-                window.resetLotteryTime();
-                document.getElementById('draw-result').classList.add('hidden');
-                document.getElementById('draw-placeholder').classList.remove('hidden');
+                 document.getElementById('draw-result').classList.add('hidden');
+                 document.getElementById('draw-placeholder').classList.remove('hidden');
             }, 10000);
         }
 
-        // Admin Functions calling pushState
-        function modLotteryTime(m) { state.lotteryEndTime += m * 60000; pushState(); }
-        function resetLotteryTime() { state.lotteryEndTime = Date.now() + CONFIG.lotteryDuration * 60000; state.lotteryState='OPEN'; pushState(); }
-        function modStockTime(m) { state.stockEndTime += m * 60000; pushState(); }
+        // --- Action Handlers (Now trigger Save) ---
+
+        function modLotteryTime(m) { 
+            state.lotteryEndTime += m * 60000; 
+            saveState(); // Sync to DB
+        }
+        function resetLotteryTime() { 
+            state.lotteryEndTime = Date.now() + CONFIG.lotteryDuration * 60000; 
+            state.lotteryState='OPEN'; 
+            saveState(); 
+        }
+        function modStockTime(m) { 
+            state.stockEndTime += m * 60000; 
+            saveState(); 
+        }
         
         function resetStockTime() { 
             if(confirm('⚠️ 确定重置股票周期吗？\n这将清空所有 002/004 的胜负场数！\n(CONFIRM RESET: Clear Time & Data?)')) {
                 state.stockEndTime = Date.now() + CONFIG.stockDuration * 60000; 
                 state.stockState='TRADING'; 
                 state.stocks = { '002': { w: 0, l: 0 }, '004': { w: 0, l: 0 } };
-                pushState();
+                saveState(); 
+                renderAll(); 
             }
         }
 
         function modStock(code, type, val) {
             state.stocks[code][type] += val;
             if (state.stocks[code][type] < 0) state.stocks[code][type] = 0;
-            pushState();
+            saveState();
+            renderAll();
         }
         function setJackpot() {
             const val = document.getElementById('input-jackpot').value;
-            if(val) { state.jackpot = parseInt(val); pushState(); }
+            if(val) { state.jackpot = parseInt(val); saveState(); renderAll(); }
         }
         function editAnno() {
             const n = prompt("公告:", state.anno);
-            if(n !== null) { state.anno = n; pushState(); }
+            if(n !== null) { state.anno = n; saveState(); renderAll(); }
         }
         function editGame(id) {
             const g = state.games.find(x => x.id === id);
@@ -775,7 +965,7 @@
                 g.cost = cost;
                 const loc = prompt("Location:", g.location);
                 if(loc) g.location = loc;
-                pushState();
+                saveState(); renderAll();
             }
         }
         
@@ -783,14 +973,20 @@
             const db = document.getElementById('view-dashboard');
             const gm = document.getElementById('view-games');
             const btns = document.querySelectorAll('.tab-btn');
+            
             btns.forEach(b => b.classList.remove('active'));
+
             if(t === 'dashboard') {
-                db.classList.remove('view-inactive'); db.classList.add('view-active');
-                gm.classList.remove('view-active'); gm.classList.add('view-inactive');
+                db.classList.remove('view-inactive');
+                db.classList.add('view-active');
+                gm.classList.remove('view-active');
+                gm.classList.add('view-inactive');
                 btns[0].classList.add('active');
             } else {
-                gm.classList.remove('view-inactive'); gm.classList.add('view-active');
-                db.classList.remove('view-active'); db.classList.add('view-inactive');
+                gm.classList.remove('view-inactive');
+                gm.classList.add('view-active');
+                db.classList.remove('view-active');
+                db.classList.add('view-inactive');
                 btns[1].classList.add('active');
             }
         }
@@ -798,14 +994,14 @@
         function setupAdminTrigger() {
             let c = 0;
             document.getElementById('admin-trigger').addEventListener('click', () => {
-                c++; if(c>=5) { c=0; window.attemptLogin(); } setTimeout(()=>c=0, 2000);
+                c++; if(c>=5) { c=0; attemptLogin(); } setTimeout(()=>c=0, 2000);
             });
         }
         function attemptLogin() {
             if(document.body.classList.contains('is-admin')) return;
             if(prompt("KEY:") === CONFIG.adminPass) {
                 document.body.classList.add('is-admin');
-                alert("ADMIN ACTIVE");
+                alert("ADMIN ACTIVE\nChanges will now sync to DB.");
             }
         }
         function logoutAdmin() { document.body.classList.remove('is-admin'); }
@@ -814,4 +1010,3 @@
     </script>
 </body>
 </html>
-
