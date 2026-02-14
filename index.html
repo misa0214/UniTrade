@@ -62,7 +62,6 @@
                 { id: 6, type: 'PVP', name: '重生之我變成初音我婆', cost: '動態', location: '待定', desc: '1. 玩法：輪流抽取積木堆疊。若抽到指令積木（如“單腳站立抽”），必須執行。\n2. 判定：誰弄倒了塔，誰直接判負。\n3. 完勝：成功執行3次指令且塔未倒，或塔高度翻倍。', perfect: '執行3次指令且未倒 或 高度翻倍 (抽獎x1)' },
                 { id: 7, type: 'PVP', name: '重生之我變成人體投籃機這些事', cost: '動態', location: '待定', desc: '1. 核心：4人投球，1人用頭接。\n2. 限制：接球者頭上綁籃筐，只能動身/頭，絕對不可用手碰籃筐。\n3. 判定：限時1分鐘，接球多者勝。', perfect: '接住10顆球 (抽獎x1)' },
                 { id: 8, type: 'PVP', name: '重生之我變成拆彈專家', cost: '動態', location: '待定', desc: '1. 配置：指揮官（能看不能動）+ 拆彈員（戴眼罩能動）。\n2. 玩法：指揮官口頭指揮拆彈員完成4x4拼圖。\n3. 判定：先完成拼圖者勝。', perfect: '60秒內完成 + 無廢話/無肢體接觸 (抽獎x1)' },
-                { id: 9, type: 'PVP', name: '重生之我變成井字棋魂', cost: '動態', location: '待定', desc: '1. 流程：10米折返跑接力下棋。\n2. 前3人：負責“放”標誌物。\n3. 第4人起：若未分勝負，跑過去必須“移動”己方一個標誌物。\n4. 判定：先連成三點一線者勝。', perfect: '前3人直接連成一線 (抽獎x1)' },
                 { id: 10, type: 'PVP/E', name: '重生之我變成諸葛亮', cost: '動態', location: '待定', desc: '1. 玩法：雙方將100兵力分配給A、B、C三城。\n2. 判定：同時亮牌，兵力多者佔城（相同平局）。\n3. 獲勝：佔領2座以上城池。\n4. 死局規則：若1勝1負1平，比較獲勝城所耗兵力，兵力少者勝（以少勝多）。', perfect: '3:0 完勝 (抽獎x1)' },
                 { id: 11, type: 'PVP', name: '重生之我變成迪達拉', cost: '動態', location: '待定', desc: '1. 規則：輪流給氣球打氣，每回合必須按1~5下。\n2. 反轉：若敢一次性按超過5下且氣球沒爆，可反轉回合（讓對方連按兩輪）。\n3. 判定：氣球爆炸者負。', perfect: '成功執行2次以上“反轉”且獲勝 (抽獎x1)' },
                 { id: 12, type: 'PVP', name: '重生之我變成狗', cost: '動態', location: '待定', desc: '1. 配置：7杯水，其中1杯是炸彈（醋/蛇草水）。\n2. 玩法：兩隊輪流選一杯一口悶。\n3. 判定：喝到炸彈者判負。但若喝完面無表情騙過對方（對方以為是水），則反殺獲勝。', perfect: '喝炸彈騙過對方 或 首輪選中對方炸彈 (抽獎x1)' }
@@ -75,23 +74,32 @@
         // --- Functions ---
 
         async function init() {
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                await signInWithCustomToken(auth, __initial_auth_token).catch(e => console.error("Auth Error:", e));
-            } else {
-                await signInAnonymously(auth).catch(e => console.error("Auth Error:", e));
+            // Handle Auth
+            const statusEl = document.getElementById('connection-status');
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (e) {
+                console.error("Auth Error:", e);
+                statusEl.innerText = "AUTH ERROR: 請去 Firebase 開啟 Anonymous 權限";
+                statusEl.classList.add('text-red-500');
             }
 
             onAuthStateChanged(auth, (user) => {
-                const statusEl = document.getElementById('connection-status');
                 if (user) {
                     currentUser = user;
                     statusEl.innerText = "ONLINE (ID: " + user.uid.substring(0,4) + ")";
-                    statusEl.classList.remove('offline');
+                    statusEl.classList.remove('offline', 'text-red-500');
                     setupRealtimeListener();
                 } else {
                     currentUser = null;
-                    statusEl.innerText = "OFFLINE";
-                    statusEl.classList.add('offline');
+                    if (!statusEl.innerText.includes("ERROR")) {
+                        statusEl.innerText = "OFFLINE";
+                        statusEl.classList.add('offline');
+                    }
                 }
             });
 
@@ -115,7 +123,9 @@
                 }
             }, (error) => {
                 console.error("Sync Error:", error);
-                document.getElementById('connection-status').innerText = "SYNC ERROR";
+                const statusEl = document.getElementById('connection-status');
+                statusEl.innerText = "SYNC ERROR: 請檢查 Firestore 權限規則";
+                statusEl.classList.add('text-red-500');
             });
         }
 
@@ -652,8 +662,8 @@
                                     </div>
                                 </div>
                                 <div class="text-right">
-                                    <div class="text-[10px] text-gray-500 mb-1">CYCLE TIMER</div>
-                                    <div class="font-num text-xl text-white stock-shared-timer">--:--</div>
+                                    <div id="stock-timer-label" class="text-[10px] text-gray-500 mb-1">CYCLE TIMER</div>
+                                    <div id="stock-timer-display" class="font-num text-xl text-white stock-shared-timer">--:--</div>
                                 </div>
                             </div>
                         </div>
