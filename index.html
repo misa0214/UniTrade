@@ -37,7 +37,7 @@
             adminPass: "8888",
             lotteryDuration: 30,
             stockDuration: 35,
-            DATA_VERSION: "2.4" // Bumped version
+            DATA_VERSION: "2.5" 
         };
 
         let state = {
@@ -49,20 +49,20 @@
             lotteryState: 'OPEN', 
             stockState: 'TRADING',
             stocks: { '002': { w: 0, l: 0 }, '004': { w: 0, l: 0 } },
-            games: [] // Loaded below
+            games: [] 
         };
 
         let networkOffset = 0; 
         let currentUser = null;
 
-        // --- 3. Robust Time Sync Function (Firebase Native Style) ---
-        // 我們通過在資料庫寫入一個 timestamp 再讀回來，來計算本地時鐘與 Google 伺服器的時差
+        // --- 3. Robust Time Sync Function ---
+        // 修正路徑：使用 6 段路徑 artifacts/{id}/public/data/system/timeCheck
         async function syncTimeWithFirestore() {
             try {
                 const statusEl = document.getElementById('connection-status');
                 statusEl.innerText = "CALIBRATING TIME...";
                 
-                const timeDoc = doc(db, 'artifacts', currentAppId, 'public', 'data', 'timeCheck');
+                const timeDoc = doc(db, 'artifacts', currentAppId, 'public', 'data', 'system', 'timeCheck');
                 await setDoc(timeDoc, { t: serverTimestamp() });
                 const snap = await getDoc(timeDoc);
                 const serverTime = snap.data().t.toMillis();
@@ -83,25 +83,25 @@
         async function init() {
             const statusEl = document.getElementById('connection-status');
             
-            // Step A: Auth
+            // Step A: Auth MUST BE FIRST
             statusEl.innerText = "AUTHENTICATING...";
             try {
-                await signInAnonymously(auth);
+                const cred = await signInAnonymously(auth);
+                currentUser = cred.user;
             } catch (e) {
                 console.error("Auth Failed:", e);
-                statusEl.innerText = "AUTH ERROR: 請去 Firebase 開啟 Anonymous 權限";
+                statusEl.innerText = "AUTH ERROR: 請開啟 Firebase 匿名登錄";
                 return;
             }
 
+            // Step B: Time Sync
+            await syncTimeWithFirestore();
+            
             onAuthStateChanged(auth, async (user) => {
                 if (user) {
                     currentUser = user;
-                    // Step B: Time Sync
-                    await syncTimeWithFirestore();
-                    
                     statusEl.innerText = `CONNECTED (${user.uid.substring(0,4)})`;
                     statusEl.classList.remove('offline');
-                    
                     setupRealtimeListener();
                 } else {
                     statusEl.innerText = "OFFLINE";
@@ -114,32 +114,32 @@
         }
 
         function setupRealtimeListener() {
+            if (!currentUser) return;
             const statusEl = document.getElementById('connection-status');
             statusEl.innerText = "SYNCING DATA...";
 
-            const docRef = doc(db, 'artifacts', currentAppId, 'public', 'data', 'gameState');
+            // 修正路徑：使用 6 段路徑 artifacts/{id}/public/data/gameState/current
+            const docRef = doc(db, 'artifacts', currentAppId, 'public', 'data', 'gameState', 'current');
 
             onSnapshot(docRef, (docSnap) => {
                 if (docSnap.exists()) {
-                    const remoteData = docSnap.data();
-                    // 只在版本匹配時更新
-                    state = remoteData;
+                    state = docSnap.data();
                     renderAll();
                     statusEl.innerText = `LIVE (Skew: ${Math.round(networkOffset)}ms)`;
                 } else {
                     console.log("No remote state found. Initializing...");
-                    state.games = getInitialGames(); // 只有第一次初始化需要
+                    state.games = getInitialGames();
                     saveState();
                 }
             }, (error) => {
                 console.error("Firestore Error:", error);
-                statusEl.innerText = "DATABASE ERROR (Check Rules)";
+                statusEl.innerText = "DATABASE ERROR: 路徑段數錯誤或權限未開";
             });
         }
 
         async function saveState() {
             if (!currentUser) return;
-            const docRef = doc(db, 'artifacts', currentAppId, 'public', 'data', 'gameState');
+            const docRef = doc(db, 'artifacts', currentAppId, 'public', 'data', 'gameState', 'current');
             try {
                 await setDoc(docRef, state, { merge: true });
             } catch (e) {
@@ -190,6 +190,7 @@
 
         function updateStockUI(code) {
             const s = state.stocks[code];
+            if(!s) return;
             const total = s.w + s.l;
             const rate = total === 0 ? 0 : Math.round((s.w / total) * 100);
             document.getElementById(`win-${code}`).innerText = s.w;
@@ -320,7 +321,7 @@
                 saveState();
             }
         };
-        window.modStock = (code, type, val) => { state.stocks[code][type] += val; saveState(); };
+        window.modStock = (code, type, val) => { state.stocks[code][type] += val; if(state.stocks[code][type]<0) state.stocks[code][type]=0; saveState(); };
         window.setJackpot = () => { const val = document.getElementById('input-jackpot').value; if(val) { state.jackpot = parseInt(val); saveState(); } };
         window.editAnno = () => { const n = prompt("公告:", state.anno); if(n !== null) { state.anno = n; saveState(); } };
         window.editGame = (id) => {
@@ -347,6 +348,10 @@
                 { id: 3, type: 'PVE', name: '拋水瓶轉生', cost: '200', location: '待定', desc: '1. 玩法：旋轉水瓶使其穩穩站立。\n2. 勝利：限時1分鐘，成功次數多者勝。', perfect: '連續成功5次' },
                 { id: 4, type: 'PVP', name: '盲人打擊', cost: '動態', location: '待定', desc: '1. 道具：海綿棒+眼罩。\n2. 玩法：原地轉3圈，擊中對手得分。', perfect: '3:0 完勝' },
                 { id: 5, type: 'SOLO', name: '特工紅繩陣', cost: '200', location: '待定', desc: '1. 玩法：穿越掛滿鈴鐺的紅繩陣。觸碰鈴鐺即失敗。', perfect: '一次不失誤穿過' },
+                { id: 6, type: 'PVP', name: '重生之我變成初音我婆', cost: '動態', location: '待定', desc: '1. 玩法：輪流抽取積木堆疊。弄倒塔者負。', perfect: '執行3次指令且未倒' },
+                { id: 7, type: 'PVP', name: '人體投籃機', cost: '動態', location: '待定', desc: '1. 核心：4人投球，1人用頭接。限時1分鐘。', perfect: '接住10顆球' },
+                { id: 8, type: 'PVP', name: '拆彈專家', cost: '動態', location: '待定', desc: '1. 配置：指揮官+拆彈員。指揮完成拼圖。', perfect: '60秒內完成' },
+                { id: 9, type: 'PVP', name: '井字棋魂', cost: '動態', location: '待定', desc: '1. 流程：10米折返跑接力下棋。連成一線勝。', perfect: '前3人直接連成一線' },
                 { id: 10, type: 'PVP/E', name: '諸葛亮兵法', cost: '動態', location: '待定', desc: '1. 玩法：分配100兵力至三城。多者佔城。佔領2座勝。', perfect: '3:0 完勝' }
             ];
         }
@@ -390,7 +395,7 @@
             <div class="w-9 h-9 rounded-full border border-[#d4af37]/30 flex items-center justify-center bg-black">
                 <i class="fa-solid fa-coins text-[#d4af37]"></i>
             </div>
-            <h1 class="text-xl font-bold tracking-widest text-white font-num">初火錢莊</h1>
+            <h1 class="text-xl font-bold tracking-widest text-white font-num uppercase">初火錢莊</h1>
         </div>
         <nav class="flex gap-8 text-sm font-bold items-center">
             <button onclick="window.setTab('dashboard')" class="tab-btn active text-gray-400 pb-1">大盤監控</button>
