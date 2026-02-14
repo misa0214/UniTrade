@@ -418,14 +418,32 @@
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        // ==========================================
+        //  已填入你的 Firebase 配置 (来自截图)
+        // ==========================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyD0tDOe3lCgrT0ANI087rlkigES_ivivFI",
+            authDomain: "pycamp-9d9bb.firebaseapp.com",
+            projectId: "pycamp-9d9bb",
+            storageBucket: "pycamp-9d9bb.firebasestorage.app",
+            messagingSenderId: "205817396545",
+            appId: "1:205817396545:web:6d1a48fba84c50b79f35c0",
+            measurementId: "G-HY0C949GMR"
+        };
+        
+        let app, auth, db;
+        try {
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+        } catch (e) {
+            console.error("Firebase Init Error:", e);
+        }
+        
+        const appId = 'final-game-station-v1';
 
         const CONFIG = {
             adminPass: "8888",
@@ -461,12 +479,9 @@
         // --- Firebase Integration ---
         
         async function initAuth() {
+            if (!auth) return;
             try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
+                await signInAnonymously(auth);
                 setupRealtimeListener();
             } catch (error) {
                 console.error("Auth Failed", error);
@@ -474,7 +489,7 @@
         }
 
         function setupRealtimeListener() {
-            if (!auth.currentUser) return;
+            if (!auth || !auth.currentUser) return;
             const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameState', 'main');
             
             // Listen to cloud changes
@@ -483,7 +498,7 @@
                     const data = docSnap.data();
                     // Merge remote data into local state
                     window.state = { ...window.state, ...data };
-                    // Handle complex merge for games array (preserve local structure if needed)
+                    // Handle complex merge for games array
                     if(data.games) {
                         window.state.games = window.state.games.map(def => {
                             const saved = data.games.find(x => x.id === def.id);
@@ -501,19 +516,34 @@
         }
 
         function pushState() {
-            if (!auth.currentUser) return;
+            if (!auth || !auth.currentUser) return;
             const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'gameState', 'main');
-            // We save the entire state object to ensure consistency
             setDoc(docRef, window.state).catch(e => console.error("Push Error", e));
         }
 
-        // --- Core Logic (Modified to call pushState instead of saveState) ---
+        // --- Core Logic ---
 
         function init() {
+            // Attach globals to window so inline HTML onclicks work (Fix for ReferenceError)
+            window.openGameDetails = openGameDetails;
+            window.closeGameDetails = closeGameDetails;
+            window.editGame = editGame;
+            window.attemptLogin = attemptLogin;
+            window.logoutAdmin = logoutAdmin;
+            window.setTab = setTab;
+            window.modLotteryTime = modLotteryTime;
+            window.resetLotteryTime = resetLotteryTime;
+            window.autoSettleLottery = autoSettleLottery;
+            window.modStockTime = modStockTime;
+            window.resetStockTime = resetStockTime;
+            window.modStock = modStock;
+            window.setJackpot = setJackpot;
+            window.editAnno = editAnno;
+
             renderAll();
             startLoop();
             setupAdminTrigger();
-            initAuth(); // Start Firebase
+            initAuth(); 
         }
 
         function renderAll() {
@@ -559,8 +589,8 @@
             }
         }
 
-        // Expose functions to window for HTML onclick handlers
-        window.openGameDetails = function(id) {
+        // Expose functions explicitly to window
+        function openGameDetails(id) {
             const g = state.games.find(x => x.id === id);
             if(!g) return;
             document.getElementById('modal-type').innerText = g.type;
@@ -575,7 +605,7 @@
             body.classList.add('modal-open');
         }
 
-        window.closeGameDetails = function() {
+        function closeGameDetails() {
             const body = document.getElementById('app-body');
             body.classList.remove('modal-open');
             body.classList.add('modal-closed');
@@ -681,7 +711,7 @@
 
         const COLORS = ['ball-red', 'ball-green', 'ball-blue'];
 
-        window.autoSettleLottery = function() {
+        function autoSettleLottery() {
             state.lotteryState = 'DRAWING';
             document.getElementById('draw-placeholder').classList.add('hidden');
             document.getElementById('draw-result').classList.add('hidden');
@@ -718,11 +748,11 @@
         }
 
         // Admin Functions calling pushState
-        window.modLotteryTime = function(m) { state.lotteryEndTime += m * 60000; pushState(); }
-        window.resetLotteryTime = function() { state.lotteryEndTime = Date.now() + CONFIG.lotteryDuration * 60000; state.lotteryState='OPEN'; pushState(); }
-        window.modStockTime = function(m) { state.stockEndTime += m * 60000; pushState(); }
+        function modLotteryTime(m) { state.lotteryEndTime += m * 60000; pushState(); }
+        function resetLotteryTime() { state.lotteryEndTime = Date.now() + CONFIG.lotteryDuration * 60000; state.lotteryState='OPEN'; pushState(); }
+        function modStockTime(m) { state.stockEndTime += m * 60000; pushState(); }
         
-        window.resetStockTime = function() { 
+        function resetStockTime() { 
             if(confirm('⚠️ 确定重置股票周期吗？\n这将清空所有 002/004 的胜负场数！\n(CONFIRM RESET: Clear Time & Data?)')) {
                 state.stockEndTime = Date.now() + CONFIG.stockDuration * 60000; 
                 state.stockState='TRADING'; 
@@ -731,20 +761,20 @@
             }
         }
 
-        window.modStock = function(code, type, val) {
+        function modStock(code, type, val) {
             state.stocks[code][type] += val;
             if (state.stocks[code][type] < 0) state.stocks[code][type] = 0;
             pushState();
         }
-        window.setJackpot = function() {
+        function setJackpot() {
             const val = document.getElementById('input-jackpot').value;
             if(val) { state.jackpot = parseInt(val); pushState(); }
         }
-        window.editAnno = function() {
+        function editAnno() {
             const n = prompt("公告:", state.anno);
             if(n !== null) { state.anno = n; pushState(); }
         }
-        window.editGame = function(id) {
+        function editGame(id) {
             const g = state.games.find(x => x.id === id);
             const cost = prompt("Fee:", g.cost);
             if(cost) {
@@ -755,7 +785,7 @@
             }
         }
         
-        window.setTab = function(t) {
+        function setTab(t) {
             const db = document.getElementById('view-dashboard');
             const gm = document.getElementById('view-games');
             const btns = document.querySelectorAll('.tab-btn');
@@ -777,14 +807,14 @@
                 c++; if(c>=5) { c=0; window.attemptLogin(); } setTimeout(()=>c=0, 2000);
             });
         }
-        window.attemptLogin = function() {
+        function attemptLogin() {
             if(document.body.classList.contains('is-admin')) return;
             if(prompt("KEY:") === CONFIG.adminPass) {
                 document.body.classList.add('is-admin');
                 alert("ADMIN ACTIVE");
             }
         }
-        window.logoutAdmin = function() { document.body.classList.remove('is-admin'); }
+        function logoutAdmin() { document.body.classList.remove('is-admin'); }
 
         init();
     </script>
