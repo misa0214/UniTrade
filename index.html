@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>test</title>
+    <title>1</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;500;700;900&family=Oswald:wght@400;700&display=swap" rel="stylesheet">
@@ -763,59 +763,69 @@
             return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
         }
 
-        const COLORS = ['ball-red', 'ball-green', 'ball-blue'];
+const COLORS = ['ball-red', 'ball-green', 'ball-blue'];
 
-        function autoSettleLottery() {
-            if (!__isAdmin) { alert('Admin only'); return; }
+function autoSettleLottery() {
+  if (!__isAdmin) { alert('Admin only'); return; }
 
-            state.lotteryState = 'DRAWING';
-            document.getElementById('draw-placeholder').classList.add('hidden');
-            document.getElementById('draw-result').classList.add('hidden');
-            document.getElementById('draw-active').classList.remove('hidden');
-            document.getElementById('draw-active').classList.add('flex');
-            
-            const interval = setInterval(() => {
-                const balls = document.querySelectorAll('#draw-active .mini-ball');
-                balls.forEach(b => {
-                    b.className = `mini-ball ${COLORS[Math.floor(Math.random()*3)]} ball-anim`;
-                });
-            }, 100);
+  // ✅ 1) 狀態寫入：DRAWING（所有人同步看到抽獎中）
+  state.lotteryState = 'DRAWING';
+  state.lotteryResult = null;
+  saveState();
 
-            setTimeout(() => {
-                clearInterval(interval);
-                finalizeLotteryDraw();
-            }, 3000);
-        }
+  document.getElementById('draw-placeholder').classList.add('hidden');
+  document.getElementById('draw-result').classList.add('hidden');
+  document.getElementById('draw-active').classList.remove('hidden');
+  document.getElementById('draw-active').classList.add('flex');
 
-        function finalizeLotteryDraw() {
-            if (!__isAdmin) { alert('Admin only'); return; }
+  const interval = setInterval(() => {
+    const balls = document.querySelectorAll('#draw-active .mini-ball');
+    balls.forEach(b => {
+      b.className = `mini-ball ${COLORS[Math.floor(Math.random()*3)]} ball-anim`;
+    });
+  }, 100);
 
-            const r1 = COLORS[Math.floor(Math.random()*3)];
-            const r2 = COLORS[Math.floor(Math.random()*3)];
-            const r3 = COLORS[Math.floor(Math.random()*3)];
+  setTimeout(() => {
+    clearInterval(interval);
+    finalizeLotteryDraw();
+  }, 3000);
+}
 
-            document.getElementById('draw-active').classList.add('hidden');
-            document.getElementById('draw-active').classList.remove('flex');
-            document.getElementById('draw-result').classList.remove('hidden');
-            document.getElementById('draw-result').classList.add('flex');
+function finalizeLotteryDraw() {
+  if (!__isAdmin) { alert('Admin only'); return; }
 
-            document.getElementById('r-ball-1').className = `mini-ball ${r1}`;
-            document.getElementById('r-ball-2').className = `mini-ball ${r2}`;
-            document.getElementById('r-ball-3').className = `mini-ball ${r3}`;
+  const r1 = COLORS[Math.floor(Math.random()*3)];
+  const r2 = COLORS[Math.floor(Math.random()*3)];
+  const r3 = COLORS[Math.floor(Math.random()*3)];
 
-            setTimeout(() => {
-                resetLotteryTime();
-                document.getElementById('draw-result').classList.add('hidden');
-                document.getElementById('draw-placeholder').classList.remove('hidden');
-            }, 10000);
-        }
+  // ✅ 2) 結果寫入：RESULT + lotteryResult（所有人同步看到同一組球）
+  state.lotteryState = 'RESULT';
+  state.lotteryResult = [r1, r2, r3];
+  saveState();
+
+  // admin 自己本機也顯示（其他人會靠 onSnapshot renderAll() 顯示）
+  document.getElementById('draw-active').classList.add('hidden');
+  document.getElementById('draw-active').classList.remove('flex');
+  document.getElementById('draw-result').classList.remove('hidden');
+  document.getElementById('draw-result').classList.add('flex');
+
+  document.getElementById('r-ball-1').className = `mini-ball ${r1}`;
+  document.getElementById('r-ball-2').className = `mini-ball ${r2}`;
+  document.getElementById('r-ball-3').className = `mini-ball ${r3}`;
+
+  setTimeout(() => {
+    resetLotteryTime(); // 這裡會 saveState()（下面我也幫你改好）
+    document.getElementById('draw-result').classList.add('hidden');
+    document.getElementById('draw-placeholder').classList.remove('hidden');
+  }, 10000);
+}
 
         function modLotteryTime(m) {
             if (!__isAdmin) { alert('Admin only'); return; }
  state.lotteryEndTime += m * 60000; saveState(); }
         function resetLotteryTime() {
             if (!__isAdmin) { alert('Admin only'); return; }
- state.lotteryEndTime = Date.now() + CONFIG.lotteryDuration * 60000; state.lotteryState='OPEN'; saveState(); }
+ state.lotteryEndTime = Date.now() + CONFIG.lotteryDuration * 60000; state.lotteryState='OPEN'; state.lotteryResult = null; saveState(); }
         function modStockTime(m) {
             if (!__isAdmin) { alert('Admin only'); return; }
  state.stockEndTime += m * 60000; saveState(); }
@@ -952,6 +962,8 @@
             const payload = {
                 version: CONFIG.DATA_VERSION,
                 anno: state.anno,
+                lotteryState: state.lotteryState || 'OPEN',
+                lotteryResult: Array.isArray(state.lotteryResult) ? state.lotteryResult : null,
                 jackpot: state.jackpot,
                 lotteryEndTime: state.lotteryEndTime,
                 stockEndTime: state.stockEndTime,
@@ -1036,4 +1048,3 @@
     </script>
 </body>
 </html>
-
