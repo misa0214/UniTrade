@@ -750,31 +750,43 @@
                 const now = Date.now();
                 
                 // Lottery
-                let lDiff = state.lotteryEndTime - now;
-                const lStatusEl = document.getElementById('lottery-status-badge');
-                const lTimerEl = document.getElementById('timer-display');
+// Lottery
+let lDiff = state.lotteryEndTime - now;
+const lStatusEl = document.getElementById('lottery-status-badge');
+const lTimerEl = document.getElementById('timer-display');
 
-                if (lDiff <= 0) {
-                    // Only admin is allowed to trigger settlement writes
-                    if (__isAdmin && state.lotteryState !== 'DRAWING' && state.lotteryState !== 'RESULT') {
-  autoSettleLottery();
+// ✅ 如果正在开奖 or 已出结果，就不要被倒计时逻辑覆盖
+const isRemoteLockedState = (state.lotteryState === 'DRAWING' || state.lotteryState === 'RESULT');
+
+if (lDiff <= 0) {
+  if (__isAdmin && state.lotteryState !== 'DRAWING' && state.lotteryState !== 'RESULT') {
+    autoSettleLottery();
+  }
+  lTimerEl.innerText = "00:00";
+} else {
+  const m = Math.floor(lDiff / 60000);
+  const s = Math.floor((lDiff % 60000) / 1000);
+  lTimerEl.innerText = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+
+  // ✅ 只有在 OPEN/FROZEN 阶段才允许本地计算状态
+  if (!isRemoteLockedState) {
+    if (m < 5) {
+      state.lotteryState = 'FROZEN';
+      lStatusEl.innerText = "FROZEN (CLOSED)";
+      lStatusEl.className =
+        "inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 bg-red-900/30 text-red-400 border border-red-900";
+    } else {
+      state.lotteryState = 'OPEN';
+      lStatusEl.innerText = "OPEN FOR BET";
+      lStatusEl.className =
+        "inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 bg-green-900/30 text-green-400 border border-green-900 shadow-[0_0_10px_rgba(34,197,94,0.3)]";
+    }
+  }
 }
-                    lTimerEl.innerText = "00:00";
-                } else {
-                    const m = Math.floor(lDiff / 60000);
-                    const s = Math.floor((lDiff % 60000) / 1000);
-                    lTimerEl.innerText = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
-                    if (m < 5) {
-                        state.lotteryState = 'FROZEN';
-                        lStatusEl.innerText = "FROZEN (CLOSED)";
-                        lStatusEl.className = "inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 bg-red-900/30 text-red-400 border border-red-900";
-                    } else {
-                        state.lotteryState = 'OPEN';
-                        lStatusEl.innerText = "OPEN FOR BET";
-                        lStatusEl.className = "inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 bg-green-900/30 text-green-400 border border-green-900 shadow-[0_0_10px_rgba(34,197,94,0.3)]";
-                    }
-                }
-                renderLotteryUIFromState();
+
+// ✅ 每秒都让 UI 跟 state 走（DRAWING/RESULT 不会闪退）
+renderLotteryUIFromState();
+
                 // Stocks
                 let sDiff = state.stockEndTime - now;
                 const sTimers = document.querySelectorAll('.stock-shared-timer');
@@ -1097,4 +1109,5 @@ renderAll();
     </script>
 </body>
 </html>
+
 
