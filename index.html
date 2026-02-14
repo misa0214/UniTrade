@@ -459,7 +459,8 @@
             jackpot: 5000,
             lotteryEndTime: Date.now() + CONFIG.lotteryDuration * 60000,
             stockEndTime: Date.now() + CONFIG.stockDuration * 60000,
-            lotteryState: 'OPEN', 
+            lotteryState: 'OPEN',
+            lotteryResult: null,
             stockState: 'TRADING',
             stocks: { '002': { w: 0, l: 0 }, '004': { w: 0, l: 0 } },
             // FULL DETAILED RULES from user input
@@ -623,7 +624,43 @@
                     </div>
                 `).join('');
             }
+            renderLotteryUIFromState();
         }
+
+        function renderLotteryUIFromState() {
+  const placeholder = document.getElementById('draw-placeholder');
+  const active = document.getElementById('draw-active');
+  const result = document.getElementById('draw-result');
+  if (!placeholder || !active || !result) return;
+
+  // 先全关
+  placeholder.classList.add('hidden');
+  active.classList.add('hidden'); active.classList.remove('flex');
+  result.classList.add('hidden'); result.classList.remove('flex');
+
+  if (state.lotteryState === 'DRAWING') {
+    active.classList.remove('hidden');
+    active.classList.add('flex');
+    return;
+  }
+
+  if (state.lotteryState === 'RESULT' && Array.isArray(state.lotteryResult) && state.lotteryResult.length === 3) {
+    const [r1, r2, r3] = state.lotteryResult;
+    result.classList.remove('hidden');
+    result.classList.add('flex');
+
+    const b1 = document.getElementById('r-ball-1');
+    const b2 = document.getElementById('r-ball-2');
+    const b3 = document.getElementById('r-ball-3');
+    if (b1) b1.className = `mini-ball ${r1}`;
+    if (b2) b2.className = `mini-ball ${r2}`;
+    if (b3) b3.className = `mini-ball ${r3}`;
+    return;
+  }
+
+  // 默认
+  placeholder.classList.remove('hidden');
+}
 
         // === Modal Logic ===
         function openGameDetails(id) {
@@ -719,7 +756,9 @@
 
                 if (lDiff <= 0) {
                     // Only admin is allowed to trigger settlement writes
-                    if (__isAdmin && state.lotteryState !== 'DRAWING') autoSettleLottery();
+                    if (__isAdmin && state.lotteryState !== 'DRAWING' && state.lotteryState !== 'RESULT') {
+  autoSettleLottery();
+}
                     lTimerEl.innerText = "00:00";
                 } else {
                     const m = Math.floor(lDiff / 60000);
@@ -735,7 +774,7 @@
                         lStatusEl.className = "inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 bg-green-900/30 text-green-400 border border-green-900 shadow-[0_0_10px_rgba(34,197,94,0.3)]";
                     }
                 }
-
+                renderLotteryUIFromState();
                 // Stocks
                 let sDiff = state.stockEndTime - now;
                 const sTimers = document.querySelectorAll('.stock-shared-timer');
@@ -1011,14 +1050,24 @@ function finalizeLotteryDraw() {
                 const p = snap.data() || {};
 
                 // Basic merge (keep defaults if remote missing fields)
-                if (typeof p.anno === "string") state.anno = p.anno;
-                if (typeof p.jackpot === "number") state.jackpot = p.jackpot;
-                if (typeof p.lotteryEndTime === "number") state.lotteryEndTime = p.lotteryEndTime;
-                if (typeof p.stockEndTime === "number") state.stockEndTime = p.stockEndTime;
-                if (p.stocks && typeof p.stocks === "object") state.stocks = p.stocks;
-                if (Array.isArray(p.games)) state.games = p.games;
+if (typeof p.anno === "string") state.anno = p.anno;
+if (typeof p.jackpot === "number") state.jackpot = p.jackpot;
 
-                renderAll();
+// ✅ lottery sync
+if (typeof p.lotteryState === "string") state.lotteryState = p.lotteryState;
+if (Array.isArray(p.lotteryResult) || p.lotteryResult === null) state.lotteryResult = p.lotteryResult;
+
+if (typeof p.lotteryEndTime === "number") state.lotteryEndTime = p.lotteryEndTime;
+
+// stocks sync (你本来就有)
+if (typeof p.stockEndTime === "number") state.stockEndTime = p.stockEndTime;
+if (typeof p.stockState === "string") state.stockState = p.stockState; // 可有可无，但建议同步
+if (p.stocks && typeof p.stocks === "object") state.stocks = p.stocks;
+
+if (Array.isArray(p.games)) state.games = p.games;
+
+renderAll();
+
             });
         }
 
@@ -1048,3 +1097,4 @@ function finalizeLotteryDraw() {
     </script>
 </body>
 </html>
+
