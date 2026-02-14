@@ -627,25 +627,57 @@
             renderLotteryUIFromState();
         }
 
-        function renderLotteryUIFromState() {
+function renderLotteryUIFromState() {
   const placeholder = document.getElementById('draw-placeholder');
   const active = document.getElementById('draw-active');
   const result = document.getElementById('draw-result');
   if (!placeholder || !active || !result) return;
 
-  // 先全关
+  // ===== helper：启动/停止动画 =====
+  const startAnim = () => {
+    if (__drawAnimRunning) return;
+    __drawAnimRunning = true;
+
+    __drawAnimTimer = setInterval(() => {
+      const balls = document.querySelectorAll('#draw-active .mini-ball');
+      balls.forEach(b => {
+        b.className = `mini-ball ${COLORS[Math.floor(Math.random() * COLORS.length)]} ball-anim`;
+      });
+    }, 100);
+  };
+
+  const stopAnim = () => {
+    __drawAnimRunning = false;
+    if (__drawAnimTimer) {
+      clearInterval(__drawAnimTimer);
+      __drawAnimTimer = null;
+    }
+  };
+
+  // ===== 先全关（但注意：DRAWING 会马上再打开 active）=====
   placeholder.classList.add('hidden');
   active.classList.add('hidden'); active.classList.remove('flex');
   result.classList.add('hidden'); result.classList.remove('flex');
 
+  // ===== DRAWING：显示 active + 播动画（所有人都会动）=====
   if (state.lotteryState === 'DRAWING') {
     active.classList.remove('hidden');
     active.classList.add('flex');
+    startAnim();
     return;
   }
 
-  if (state.lotteryState === 'RESULT' && Array.isArray(state.lotteryResult) && state.lotteryResult.length === 3) {
+  // 只要不是 DRAWING，就必须停动画（否则会一直跑）
+  stopAnim();
+
+  // ===== RESULT：显示结果 =====
+  if (
+    state.lotteryState === 'RESULT' &&
+    Array.isArray(state.lotteryResult) &&
+    state.lotteryResult.length === 3
+  ) {
     const [r1, r2, r3] = state.lotteryResult;
+
     result.classList.remove('hidden');
     result.classList.add('flex');
 
@@ -658,7 +690,7 @@
     return;
   }
 
-  // 默认
+  // ===== 默认：placeholder =====
   placeholder.classList.remove('hidden');
 }
 
@@ -815,6 +847,8 @@ renderLotteryUIFromState();
         }
 
 const COLORS = ['ball-red', 'ball-green', 'ball-blue'];
+let __drawAnimTimer = null;
+let __drawAnimRunning = false;
 
 function autoSettleLottery() {
   if (!__isAdmin) { alert('Admin only'); return; }
@@ -839,7 +873,7 @@ function autoSettleLottery() {
   setTimeout(() => {
     clearInterval(interval);
     finalizeLotteryDraw();
-  }, 3000);
+  }, 5000);
 }
 
 function finalizeLotteryDraw() {
@@ -1099,6 +1133,7 @@ renderAll();
     </script>
 </body>
 </html>
+
 
 
 
