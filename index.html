@@ -8,12 +8,11 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;500;700;900&family=Oswald:wght@400;700&display=swap" rel="stylesheet">
     
-    <!-- Firebase SDKs (Updated to v12.9.0 as requested) -->
+    <!-- Unified Script Module for Firebase and Game Logic -->
     <script type="module">
         // Import the functions you need from the SDKs you need
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-app.js";
         import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-analytics.js";
-        // Adding Auth and Firestore for game functionality
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-auth.js";
         import { getFirestore, doc, onSnapshot, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/12.9.0/firebase-firestore.js";
 
@@ -28,7 +27,6 @@
             measurementId: "G-HY0C949GMR"
         };
 
-        // Fallback for Canvas environment (ignore this if running locally)
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : userConfig;
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-game-room';
 
@@ -38,15 +36,353 @@
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // Global Access for Game Logic
-        window.db = db;
-        window.auth = auth;
-        window.doc = doc;
-        window.setDoc = setDoc;
-        window.updateDoc = updateDoc;
-        window.appId = appId;
-        window.signInWithCustomToken = signInWithCustomToken;
-        window.signInAnonymously = signInAnonymously;
+        // --- Game Logic Constants & State ---
+        const CONFIG = {
+            adminPass: "8888",
+            lotteryDuration: 30,
+            stockDuration: 35,
+            DATA_VERSION: "2.3"
+        };
+
+        const DEFAULT_STATE = {
+            version: CONFIG.DATA_VERSION,
+            anno: "初火钱庄交易系统已上线，请各位主帅前往各大站点进行博弈。",
+            jackpot: 5000,
+            lotteryEndTime: Date.now() + CONFIG.lotteryDuration * 60000,
+            stockEndTime: Date.now() + CONFIG.stockDuration * 60000,
+            lotteryState: 'OPEN', 
+            stockState: 'TRADING',
+            stocks: { '002': { w: 0, l: 0 }, '004': { w: 0, l: 0 } },
+            games: [
+                { id: 1, type: 'PVP', name: '重生之變成石頭剪刀布大師卻因為平局破產這檔事', cost: '動態', location: '待定', desc: '1. 基礎規則：至少6人參與。每隊發6張卡（2石2剪2布）。\n2. 流程：嚴格進行6輪，卡片必須用完，不可保留。每輪結算後公開棄牌。\n3. 死鎖與懸賞：若平局，雙方各扣除50道（場地費），本輪獎金（150）不發，直接注入懸賞池。下一輪贏家通吃。\n4. 最終審判：若第6輪依然平局，懸賞池被系統強制回收，無人能得。', perfect: '比分 5:1 或 6:0 (抽獎x1)' },
+                { id: 2, type: 'PVE', name: '關於雙峰塔不對等我打算開飛機把雙峰塔撞了', cost: '200', location: '待定', desc: '1. 玩法：桌上有兩堆硬幣（左11，右18）。\n2. 操作：單取（拿走一堆中任意數量）或 雙取（兩堆同時拿走相同數量）。\n3. 勝利：拿走桌上最後一枚硬幣者勝。\n4. 付費玩法：支付200可搶先手或指定先手。', perfect: '不買Add-on贏過Committee (抽獎x1)' },
+                { id: 3, type: 'PVE', name: '關於我轉生變成水瓶還要被扔這檔事', cost: '200', location: '待定', desc: '1. 玩法：拋水瓶，旋轉一圈後穩穩站立。\n2. 勝利：限時1分鐘，成功次數多者勝；或競速模式先成功5次者勝。\n3. Add-on：150道讓NPC需成功7次；300道讓NPC需連續成功5次。', perfect: '不買Add-on贏過Committee (抽獎x1)' },
+                { id: 4, type: 'PVP', name: '重生之我變成瞎子', cost: '動態', location: '待定', desc: '1. 道具：海綿棒x2，眼罩x2。\n2. 玩法：戴眼罩原地轉3圈迷失方向。依靠直覺或隊友呼喊攻擊。\n3. 判定：擊中頭部/軀幹+1分，對手出界+1分。先得3分者勝。', perfect: '3:0 或 3:1 獲勝 (抽獎x1)' },
+                { id: 5, type: 'SOLO', name: '重生之我變成特工007', cost: '200', location: '待定', desc: '1. 玩法：1人挑戰。穿越掛滿鈴鐺的紅繩陣取物。\n2. 判定：身體觸碰鈴鐺發出聲響即失敗。\n3. Pay-to-Win：支付200道可剪斷一條紅繩。', perfect: '一次不失誤穿過整個陣仗 (抽獎x1)' },
+                { id: 6, type: 'PVP', name: '重生之我變成初音我婆', cost: '動態', location: '待定', desc: '1. 玩法：輪流抽取積木堆疊。若抽到指令積木（如“單腳站立抽”），必須執行。\n2. 判定：誰弄倒了塔，誰直接判負。\n3. 完勝：成功執行3次指令且塔未倒，或塔高度翻倍。', perfect: '執行3次指令且未倒 或 高度翻倍 (抽獎x1)' },
+                { id: 7, type: 'PVP', name: '重生之我變成人體投籃機這些事', cost: '動態', location: '待定', desc: '1. 核心：4人投球，1人用頭接。\n2. 限制：接球者頭上綁籃筐，只能動身/頭，絕對不可用手碰籃筐。\n3. 判定：限時1分鐘，接球多者勝。', perfect: '接住10顆球 (抽獎x1)' },
+                { id: 8, type: 'PVP', name: '重生之我變成拆彈專家', cost: '動態', location: '待定', desc: '1. 配置：指揮官（能看不能動）+ 拆彈員（戴眼罩能動）。\n2. 玩法：指揮官口頭指揮拆彈員完成4x4拼圖。\n3. 判定：先完成拼圖者勝。', perfect: '60秒內完成 + 無廢話/無肢體接觸 (抽獎x1)' },
+                { id: 9, type: 'PVP', name: '重生之我變成井字棋魂', cost: '動態', location: '待定', desc: '1. 流程：10米折返跑接力下棋。\n2. 前3人：負責“放”標誌物。\n3. 第4人起：若未分勝負，跑過去必須“移動”己方一個標誌物。\n4. 判定：先連成三點一線者勝。', perfect: '前3人直接連成一線 (抽獎x1)' },
+                { id: 10, type: 'PVP/E', name: '重生之我變成諸葛亮', cost: '動態', location: '待定', desc: '1. 玩法：雙方將100兵力分配給A、B、C三城。\n2. 判定：同時亮牌，兵力多者佔城（相同平局）。\n3. 獲勝：佔領2座以上城池。\n4. 死局規則：若1勝1負1平，比較獲勝城所耗兵力，兵力少者勝（以少勝多）。', perfect: '3:0 完勝 (抽獎x1)' },
+                { id: 11, type: 'PVP', name: '重生之我變成迪達拉', cost: '動態', location: '待定', desc: '1. 規則：輪流給氣球打氣，每回合必須按1~5下。\n2. 反轉：若敢一次性按超過5下且氣球沒爆，可反轉回合（讓對方連按兩輪）。\n3. 判定：氣球爆炸者負。', perfect: '成功執行2次以上“反轉”且獲勝 (抽獎x1)' },
+                { id: 12, type: 'PVP', name: '重生之我變成狗', cost: '動態', location: '待定', desc: '1. 配置：7杯水，其中1杯是炸彈（醋/蛇草水）。\n2. 玩法：兩隊輪流選一杯一口悶。\n3. 判定：喝到炸彈者判負。但若喝完面無表情騙過對方（對方以為是水），則反殺獲勝。', perfect: '喝炸彈騙過對方 或 首輪選中對方炸彈 (抽獎x1)' }
+            ]
+        };
+
+        let state = JSON.parse(JSON.stringify(DEFAULT_STATE));
+        let currentUser = null;
+
+        // --- Functions ---
+
+        async function init() {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(auth, __initial_auth_token).catch(e => console.error("Auth Error:", e));
+            } else {
+                await signInAnonymously(auth).catch(e => console.error("Auth Error:", e));
+            }
+
+            onAuthStateChanged(auth, (user) => {
+                const statusEl = document.getElementById('connection-status');
+                if (user) {
+                    currentUser = user;
+                    statusEl.innerText = "ONLINE (ID: " + user.uid.substring(0,4) + ")";
+                    statusEl.classList.remove('offline');
+                    setupRealtimeListener();
+                } else {
+                    currentUser = null;
+                    statusEl.innerText = "OFFLINE";
+                    statusEl.classList.add('offline');
+                }
+            });
+
+            renderAll();
+            startLoop();
+            setupAdminTrigger();
+        }
+
+        function setupRealtimeListener() {
+            if (!currentUser) return;
+            let docRef = (appId === 'default-game-room') 
+                ? doc(db, 'gameData', 'globalState') 
+                : doc(db, 'artifacts', appId, 'public', 'data', 'gameState');
+
+            onSnapshot(docRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    state = docSnap.data();
+                    renderAll();
+                } else {
+                    saveState();
+                }
+            }, (error) => {
+                console.error("Sync Error:", error);
+                document.getElementById('connection-status').innerText = "SYNC ERROR";
+            });
+        }
+
+        async function saveState() {
+            if (!currentUser) return;
+            let docRef = (appId === 'default-game-room') 
+                ? doc(db, 'gameData', 'globalState') 
+                : doc(db, 'artifacts', appId, 'public', 'data', 'gameState');
+            
+            try {
+                await setDoc(docRef, state, { merge: true });
+            } catch (e) {
+                console.error("Save Failed:", e);
+            }
+        }
+
+        function renderAll() {
+            const ticker = document.getElementById('ticker-bar');
+            const annoText = document.getElementById('anno-text');
+            if(!state.anno) ticker.classList.add('hidden');
+            else {
+                ticker.classList.remove('hidden');
+                annoText.innerText = state.anno;
+            }
+
+            document.getElementById('jackpot-display').innerText = state.jackpot.toLocaleString();
+            updateStockUI('002');
+            updateStockUI('004');
+
+            const container = document.getElementById('games-container');
+            if(container) {
+                container.innerHTML = state.games.map(g => `
+                    <div class="glass-card p-5 rounded-lg relative hover:bg-white/5 transition-colors group border border-white/5 hover:border-[#d4af37]/30 cursor-pointer" onclick="openGameDetails(${g.id})">
+                        <div class="flex justify-between items-center mb-4 pointer-events-none">
+                            <span class="text-[10px] font-bold px-2 py-0.5 rounded tracking-wider ${g.type === 'PVP' ? 'badge-pvp' : g.type === 'PVE' ? 'badge-pve' : 'badge-mixed'}">${g.type}</span>
+                            <div class="text-right">
+                                 <span class="text-[#d4af37] font-serif italic text-xl font-bold">Game ${g.id}</span>
+                                 <div class="text-[10px] text-gray-500 flex items-center justify-end gap-1 mt-0.5"><i class="fa-solid fa-location-dot"></i> ${g.location || '待定'}</div>
+                            </div>
+                        </div>
+                        <h3 class="text-white font-bold text-lg mb-1 whitespace-nowrap overflow-hidden text-ellipsis pointer-events-none">${g.name}</h3>
+                        <div class="flex justify-between text-xs text-gray-400 mb-4 pb-3 border-b border-white/10 items-center pointer-events-none">
+                            <span class="uppercase tracking-widest text-[10px]">Entry Fee</span>
+                            <span class="text-white font-num text-lg text-[#d4af37]">${g.cost}</span>
+                        </div>
+                        <p class="text-xs text-gray-400 leading-relaxed mb-4 h-10 overflow-hidden text-ellipsis opacity-80 pointer-events-none">${g.desc}</p>
+                        <div class="bg-gradient-to-r from-[#d4af37]/10 to-transparent p-2 rounded-l border-l-2 border-[#d4af37] pointer-events-none">
+                            <div class="text-[9px] text-[#d4af37] font-bold uppercase mb-0.5 tracking-wider">Perfect Win</div>
+                            <div class="text-xs text-gray-300 leading-tight truncate">${g.perfect}</div>
+                        </div>
+                        <div class="absolute bottom-4 right-4 text-[#d4af37] opacity-0 group-hover:opacity-100 transition text-xs flex items-center gap-1">
+                            查看詳情 <i class="fa-solid fa-arrow-right"></i>
+                        </div>
+                        <button onclick="event.stopPropagation(); window.editGame(${g.id})" class="admin-el absolute top-4 right-4 text-gray-600 hover:text-white bg-black/50 w-6 h-6 rounded-full items-center justify-center z-10"><i class="fa-solid fa-pen text-xs"></i></button>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function updateStockUI(code) {
+            const s = state.stocks[code];
+            const total = s.w + s.l;
+            const rate = total === 0 ? 0 : Math.round((s.w / total) * 100);
+            
+            const wEl = document.getElementById(`win-${code}`);
+            if(wEl) wEl.innerText = s.w;
+            document.getElementById(`loss-${code}`).innerText = s.l;
+            document.getElementById(`rate-${code}`).innerText = rate + "%";
+
+            const statusText = document.getElementById(`stock-status-text-${code}`);
+            const card = document.getElementById(`stock-${code}-card`);
+            
+            let displayText = "WAITING";
+            let colorClass = "text-gray-600";
+            let borderClass = "";
+
+            if (total < 5) {
+                displayText = "流局 (REFUND)";
+                colorClass = "text-gray-500";
+            } else if (rate >= 80) {
+                displayText = "瘋牛 (+200%)";
+                colorClass = "text-green-400 neon-text-gold";
+                borderClass = "neon-border-green";
+            } else if (rate >= 60) {
+                displayText = "牛市 (+150)";
+                colorClass = "text-green-500";
+            } else if (rate >= 40) {
+                displayText = "震盪 (-5%)";
+                colorClass = "text-yellow-500";
+            } else {
+                displayText = "崩盤 (-50%)";
+                colorClass = "text-red-600 neon-text-red";
+                borderClass = "neon-border-red";
+            }
+
+            statusText.innerText = displayText;
+            statusText.className = `text-2xl font-bold tracking-widest ${colorClass}`;
+            
+            card.classList.remove('neon-border-green', 'neon-border-red');
+            if(state.stockState === 'SETTLED' && borderClass) {
+                 card.classList.add(borderClass);
+                 card.classList.add('settle-flash');
+            } else {
+                card.classList.remove('settle-flash');
+            }
+        }
+
+        function startLoop() {
+            setInterval(() => {
+                const now = Date.now();
+                let lDiff = state.lotteryEndTime - now;
+                const lStatusEl = document.getElementById('lottery-status-badge');
+                const lTimerEl = document.getElementById('timer-display');
+
+                if (lDiff <= 0) {
+                    if (state.lotteryState !== 'DRAWING') window.autoSettleLottery();
+                    lTimerEl.innerText = "00:00";
+                } else {
+                    const m = Math.floor(lDiff / 60000);
+                    const s = Math.floor((lDiff % 60000) / 1000);
+                    lTimerEl.innerText = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+                    if (m < 5) {
+                        state.lotteryState = 'FROZEN';
+                        lStatusEl.innerText = "FROZEN (CLOSED)";
+                        lStatusEl.className = "inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 bg-red-900/30 text-red-400 border border-red-900";
+                    } else {
+                        state.lotteryState = 'OPEN';
+                        lStatusEl.innerText = "OPEN FOR BET";
+                        lStatusEl.className = "inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 bg-green-900/30 text-green-400 border border-green-900 shadow-[0_0_10px_rgba(34,197,94,0.3)]";
+                    }
+                }
+
+                let sDiff = state.stockEndTime - now;
+                const sTimers = document.querySelectorAll('.stock-shared-timer');
+                const sTimerDisplay = document.getElementById('stock-timer-display');
+                if(sTimerDisplay) sTimerDisplay.innerText = formatTime(sDiff);
+                sTimers.forEach(el => el.innerText = formatTime(sDiff));
+
+                if (sDiff <= 0) {
+                    state.stockState = 'SETTLED';
+                    updateStockUI('002');
+                    updateStockUI('004');
+                    sTimers.forEach(el => el.innerText = "SETTLED");
+                } else {
+                    const sm = Math.floor(sDiff / 60000);
+                    if (sm >= 20) state.stockState = 'TRADING';
+                    else state.stockState = 'LOCKED';
+                }
+            }, 1000);
+        }
+
+        function formatTime(ms) {
+            if (ms < 0) return "00:00";
+            const m = Math.floor(ms / 60000);
+            const s = Math.floor((ms % 60000) / 1000);
+            return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+        }
+
+        // --- Global Exports (for UI handlers) ---
+        window.openGameDetails = (id) => {
+            const g = state.games.find(x => x.id === id);
+            if(!g) return;
+            document.getElementById('modal-type').innerText = g.type;
+            document.getElementById('modal-type').className = `inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 border ${g.type === 'PVP' ? 'badge-pvp' : g.type === 'PVE' ? 'badge-pve' : 'badge-mixed'}`;
+            document.getElementById('modal-title').innerText = g.name;
+            document.getElementById('modal-cost').innerText = g.cost;
+            document.getElementById('modal-location').innerText = g.location || '待定';
+            document.getElementById('modal-desc').innerText = g.desc;
+            document.getElementById('modal-perfect').innerText = g.perfect;
+            const body = document.getElementById('app-body');
+            body.classList.remove('modal-closed');
+            body.classList.add('modal-open');
+        };
+
+        window.closeGameDetails = () => {
+            const body = document.getElementById('app-body');
+            body.classList.remove('modal-open');
+            body.classList.add('modal-closed');
+        };
+
+        window.setTab = (t) => {
+            const db_view = document.getElementById('view-dashboard');
+            const gm_view = document.getElementById('view-games');
+            const btns = document.querySelectorAll('.tab-btn');
+            btns.forEach(b => b.classList.remove('active'));
+            if(t === 'dashboard') {
+                db_view.classList.remove('view-inactive');
+                db_view.classList.add('view-active');
+                gm_view.classList.remove('view-active');
+                gm_view.classList.add('view-inactive');
+                btns[0].classList.add('active');
+            } else {
+                gm_view.classList.remove('view-inactive');
+                gm_view.classList.add('view-active');
+                db_view.classList.remove('view-active');
+                db_view.classList.add('view-inactive');
+                btns[1].classList.add('active');
+            }
+        };
+
+        window.autoSettleLottery = () => {
+            document.getElementById('draw-placeholder').classList.add('hidden');
+            document.getElementById('draw-result').classList.add('hidden');
+            document.getElementById('draw-active').classList.remove('hidden');
+            document.getElementById('draw-active').classList.add('flex');
+            const COLORS = ['ball-red', 'ball-green', 'ball-blue'];
+            const interval = setInterval(() => {
+                const balls = document.querySelectorAll('#draw-active .mini-ball');
+                balls.forEach(b => {
+                    b.className = `mini-ball ${COLORS[Math.floor(Math.random()*3)]} ball-anim`;
+                });
+            }, 100);
+            setTimeout(() => {
+                clearInterval(interval);
+                const r1 = COLORS[Math.floor(Math.random()*3)];
+                const r2 = COLORS[Math.floor(Math.random()*3)];
+                const r3 = COLORS[Math.floor(Math.random()*3)];
+                document.getElementById('draw-active').classList.add('hidden');
+                document.getElementById('draw-result').classList.remove('hidden');
+                document.getElementById('draw-result').classList.add('flex');
+                document.getElementById('r-ball-1').className = `mini-ball ${r1}`;
+                document.getElementById('r-ball-2').className = `mini-ball ${r2}`;
+                document.getElementById('r-ball-3').className = `mini-ball ${r3}`;
+                setTimeout(() => {
+                     document.getElementById('draw-result').classList.add('hidden');
+                     document.getElementById('draw-placeholder').classList.remove('hidden');
+                }, 10000);
+            }, 3000);
+        };
+
+        window.modLotteryTime = (m) => { state.lotteryEndTime += m * 60000; saveState(); };
+        window.resetLotteryTime = () => { state.lotteryEndTime = Date.now() + CONFIG.lotteryDuration * 60000; state.lotteryState='OPEN'; saveState(); };
+        window.modStockTime = (m) => { state.stockEndTime += m * 60000; saveState(); };
+        window.resetStockTime = () => {
+            if(confirm('⚠️ 確定重置股票週期嗎？\n這將清空所有 002/004 的勝負場數！')) {
+                state.stockEndTime = Date.now() + CONFIG.stockDuration * 60000; 
+                state.stockState='TRADING'; 
+                state.stocks = { '002': { w: 0, l: 0 }, '004': { w: 0, l: 0 } };
+                saveState();
+            }
+        };
+        window.modStock = (code, type, val) => { state.stocks[code][type] += val; if (state.stocks[code][type] < 0) state.stocks[code][type] = 0; saveState(); };
+        window.setJackpot = () => { const val = document.getElementById('input-jackpot').value; if(val) { state.jackpot = parseInt(val); saveState(); } };
+        window.editAnno = () => { const n = prompt("公告:", state.anno); if(n !== null) { state.anno = n; saveState(); } };
+        window.editGame = (id) => {
+            const g = state.games.find(x => x.id === id);
+            const cost = prompt("Fee:", g.cost);
+            if(cost) { g.cost = cost; const loc = prompt("Location:", g.location); if(loc) g.location = loc; saveState(); }
+        };
+        window.attemptLogin = () => {
+            if(document.body.classList.contains('is-admin')) return;
+            if(prompt("KEY:") === CONFIG.adminPass) {
+                document.body.classList.add('is-admin');
+                alert("ADMIN ACTIVE\nChanges will now sync to DB.");
+            }
+        };
+        window.logoutAdmin = () => { document.body.classList.remove('is-admin'); };
+
+        function setupAdminTrigger() {
+            let c = 0;
+            document.getElementById('admin-trigger').addEventListener('click', () => {
+                c++; if(c>=5) { c=0; window.attemptLogin(); } setTimeout(()=>c=0, 2000);
+            });
+        }
+
+        // Start App
+        init();
     </script>
 
     <style>
@@ -89,10 +425,8 @@
         .neon-border-green { box-shadow: 0 0 15px rgba(34, 197, 94, 0.2); border-color: rgba(34, 197, 94, 0.5); }
         .neon-border-red { box-shadow: 0 0 15px rgba(239, 68, 68, 0.2); border-color: rgba(239, 68, 68, 0.5); }
 
-        /* Admin Controls */
         body:not(.is-admin) .admin-el { display: none !important; }
 
-        /* Navigation Tabs */
         .tab-btn {
             position: relative;
             opacity: 0.6;
@@ -114,7 +448,6 @@
             box-shadow: 0 0 10px var(--gold-main);
         }
 
-        /* View Transitions (Apple-like) */
         .view-section {
             position: absolute;
             inset: 0;
@@ -127,33 +460,16 @@
         }
         .view-section::-webkit-scrollbar { display: none; }
 
-        .view-active {
-            opacity: 1;
-            transform: scale(1);
-            pointer-events: auto;
-            z-index: 10;
-        }
+        .view-active { opacity: 1; transform: scale(1); pointer-events: auto; z-index: 10; }
+        .view-inactive { opacity: 0; transform: scale(0.95); pointer-events: none; z-index: 0; }
 
-        .view-inactive {
-            opacity: 0;
-            transform: scale(0.95);
-            pointer-events: none;
-            z-index: 0;
-        }
-
-        /* Modal Transitions */
-        #game-modal {
-            transition: opacity 0.4s cubic-bezier(0.32, 0.72, 0, 1);
-        }
-        #game-modal-content {
-            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        }
+        #game-modal { transition: opacity 0.4s cubic-bezier(0.32, 0.72, 0, 1); }
+        #game-modal-content { transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
         .modal-open #game-modal { opacity: 1; pointer-events: auto; }
         .modal-open #game-modal-content { transform: scale(1); }
         .modal-closed #game-modal { opacity: 0; pointer-events: none; }
         .modal-closed #game-modal-content { transform: scale(0.9); }
 
-        /* Badges */
         .badge-pvp { background: rgba(153, 27, 27, 0.2); color: #fca5a5; border: 1px solid rgba(153, 27, 27, 0.4); }
         .badge-pve { background: rgba(30, 64, 175, 0.2); color: #93c5fd; border: 1px solid rgba(30, 64, 175, 0.4); }
         .badge-solo { background: rgba(107, 33, 168, 0.2); color: #d8b4fe; border: 1px solid rgba(107, 33, 168, 0.4); }
@@ -184,7 +500,6 @@
             to { box-shadow: inset 0 0 50px rgba(212, 175, 55, 0.3); }
         }
 
-        /* Connecting Indicator */
         #connection-status {
             position: fixed;
             bottom: 10px;
@@ -207,13 +522,13 @@
             <div class="w-9 h-9 rounded-full border border-[#d4af37]/30 flex items-center justify-center bg-gradient-to-b from-[#2a2a2a] to-[#0a0a0a] shadow-[0_0_10px_rgba(212,175,55,0.1)]">
                 <i class="fa-solid fa-coins text-[#d4af37] text-xs"></i>
             </div>
-            <h1 class="text-xl font-bold tracking-[0.25em] text-gold-gradient uppercase font-num">初火钱庄</h1>
+            <h1 class="text-xl font-bold tracking-[0.25em] text-gold-gradient uppercase font-num">初火錢莊</h1>
         </div>
         
         <nav class="flex gap-8 text-sm font-bold tracking-widest items-center">
-            <button onclick="setTab('dashboard')" class="tab-btn active text-gray-400 hover:text-white pb-1">大盘监控</button>
-            <button onclick="setTab('games')" class="tab-btn text-gray-400 hover:text-white pb-1">游戏手册</button>
-            <button onclick="attemptLogin()" class="text-gray-600 hover:text-[#d4af37] transition-colors px-2 ml-2"><i class="fa-solid fa-user-gear"></i></button>
+            <button onclick="window.setTab('dashboard')" class="tab-btn active text-gray-400 hover:text-white pb-1">大盤監控</button>
+            <button onclick="window.setTab('games')" class="tab-btn text-gray-400 hover:text-white pb-1">遊戲手冊</button>
+            <button onclick="window.attemptLogin()" class="text-gray-600 hover:text-[#d4af37] transition-colors px-2 ml-2"><i class="fa-solid fa-user-gear"></i></button>
         </nav>
     </header>
 
@@ -227,7 +542,7 @@
             <div id="ticker-bar" class="w-full bg-black/40 border border-[#d4af37]/20 rounded-md p-2 mb-8 flex items-center shadow-[0_0_15px_rgba(212,175,55,0.05)] max-w-7xl mx-auto">
                 <div id="ticker-label" class="bg-[#d4af37]/10 px-3 py-1 rounded text-xs text-[#d4af37] font-bold mr-3 whitespace-nowrap">LIVE FEED</div>
                 <div class="flex-1 overflow-hidden relative h-5">
-                    <p id="anno-text" class="text-sm text-[#d4af37]/90 font-medium whitespace-nowrap absolute w-full truncate">正在连接至初火钱庄系统...</p>
+                    <p id="anno-text" class="text-sm text-[#d4af37]/90 font-medium whitespace-nowrap absolute w-full truncate">正在連接至初火錢莊系統...</p>
                 </div>
             </div>
 
@@ -239,7 +554,6 @@
                     <div class="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-[#d4af37] to-transparent shadow-[0_0_15px_#d4af37]"></div>
                     
                     <div class="relative z-10 grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
-                        <!-- Left -->
                         <div class="text-center md:text-left">
                             <p class="text-[10px] text-[#d4af37] tracking-[0.4em] uppercase mb-2 opacity-80">Lottery Jackpot</p>
                             <div class="flex justify-center md:justify-start items-baseline gap-2">
@@ -247,7 +561,6 @@
                                 <span id="jackpot-display" class="text-5xl md:text-6xl font-black text-white font-num neon-text-gold tracking-tighter">--</span>
                             </div>
                         </div>
-                        <!-- Center -->
                         <div class="flex flex-col items-center justify-center h-24 bg-black/40 rounded-lg border border-white/5 relative overflow-hidden">
                             <div id="draw-placeholder" class="flex flex-col items-center transition-opacity duration-300">
                                 <span class="text-xs text-gray-500 tracking-widest mb-1">WINNING COLORS</span>
@@ -271,7 +584,6 @@
                                 </div>
                             </div>
                         </div>
-                        <!-- Right -->
                         <div class="text-center md:text-right">
                             <div id="lottery-status-badge" class="inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 bg-gray-800 text-gray-500 border border-gray-700">WAITING</div>
                             <div class="text-[10px] text-gray-400 mb-1 tracking-widest">NEXT DRAW IN</div>
@@ -282,7 +594,6 @@
 
                 <!-- Stocks -->
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <!-- Stock 002 -->
                     <div id="stock-002-card" class="dashboard-card rounded-2xl p-6 relative overflow-hidden transition-all duration-500">
                         <div class="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10"></div>
                         <div class="relative z-10 flex flex-col h-full justify-between">
@@ -315,7 +626,6 @@
                             </div>
                         </div>
                     </div>
-                    <!-- Stock 004 -->
                     <div id="stock-004-card" class="dashboard-card rounded-2xl p-6 relative overflow-hidden transition-all duration-500">
                         <div class="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10"></div>
                         <div class="relative z-10 flex flex-col h-full justify-between">
@@ -352,38 +662,31 @@
             </div>
         </section>
 
-        <!-- MANUAL VIEW (With Apple-like transition) -->
+        <!-- MANUAL VIEW -->
         <section id="view-games" class="view-section view-inactive">
             <div class="max-w-7xl mx-auto pb-20">
                 <h2 class="text-center text-xl text-gold-gradient font-bold mb-8 tracking-[0.3em] font-num uppercase border-b border-white/5 pb-4">Game Manual</h2>
-                <div id="games-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                    <!-- JS Rendered -->
-                </div>
+                <div id="games-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5"></div>
             </div>
         </section>
 
     </main>
 
-    <!-- Game Detail Modal (New!) -->
+    <!-- Game Detail Modal -->
     <div id="game-modal" class="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 pointer-events-none opacity-0">
         <div id="game-modal-content" class="bg-[#111] border border-[#d4af37]/30 w-full max-w-2xl rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.8)] overflow-hidden transform scale-90">
-            <!-- Modal Header -->
             <div class="bg-gradient-to-r from-[#d4af37]/20 to-transparent p-6 border-b border-[#d4af37]/20">
                 <div class="flex justify-between items-start">
                     <div>
                         <div id="modal-type" class="inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 border">PVP</div>
                         <h2 id="modal-title" class="text-2xl md:text-3xl font-bold text-white leading-tight">Game Title</h2>
                     </div>
-                    <button onclick="closeGameDetails()" class="text-gray-400 hover:text-white transition p-2">
+                    <button onclick="window.closeGameDetails()" class="text-gray-400 hover:text-white transition p-2">
                         <i class="fa-solid fa-xmark text-2xl"></i>
                     </button>
                 </div>
             </div>
-            
-            <!-- Modal Body -->
             <div class="p-6 md:p-8 space-y-6 overflow-y-auto max-h-[70vh]">
-                
-                <!-- Info Grid -->
                 <div class="grid grid-cols-2 gap-4">
                     <div class="bg-white/5 p-4 rounded border border-white/10">
                         <div class="text-[10px] text-gray-500 tracking-widest uppercase mb-1">Entry Fee</div>
@@ -394,16 +697,12 @@
                         <div id="modal-location" class="text-xl text-gray-300">Station X</div>
                     </div>
                 </div>
-
-                <!-- Rules -->
                 <div>
-                    <h3 class="text-[#d4af37] font-bold text-sm tracking-widest uppercase mb-3 border-l-2 border-[#d4af37] pl-3">详细规则</h3>
+                    <h3 class="text-[#d4af37] font-bold text-sm tracking-widest uppercase mb-3 border-l-2 border-[#d4af37] pl-3">詳細規則</h3>
                     <p id="modal-desc" class="text-gray-300 text-sm leading-relaxed whitespace-pre-line">Game Rules...</p>
                 </div>
-
-                <!-- Perfect Win -->
                 <div class="bg-green-900/10 border border-green-500/30 p-4 rounded-lg">
-                    <h3 class="text-green-500 font-bold text-xs tracking-widest uppercase mb-2">完胜条件 Perfect Win</h3>
+                    <h3 class="text-green-500 font-bold text-xs tracking-widest uppercase mb-2">完勝條件 Perfect Win</h3>
                     <p id="modal-perfect" class="text-green-300 text-sm font-bold">Condition...</p>
                 </div>
             </div>
@@ -413,58 +712,54 @@
     <!-- Admin Console -->
     <footer class="admin-el fixed bottom-0 w-full bg-[#050505]/95 backdrop-blur-xl border-t border-[#d4af37]/50 p-6 z-50 shadow-[0_-10px_40px_rgba(0,0,0,1)] transition-transform duration-300">
         <div class="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
-            <!-- Lottery Control -->
             <div class="space-y-3 border-r border-white/10 pr-6">
                 <h3 class="text-[#d4af37] font-bold tracking-[0.2em] text-xs uppercase mb-2"><i class="fa-solid fa-dice mr-2"></i>Lottery (30m)</h3>
                 <div class="flex gap-2">
-                    <button onclick="modLotteryTime(5)" class="flex-1 bg-gray-800 text-green-400 border border-white/10 rounded py-2 text-xs font-bold">+5m</button>
-                    <button onclick="modLotteryTime(-5)" class="flex-1 bg-gray-800 text-red-400 border border-white/10 rounded py-2 text-xs font-bold">-5m</button>
-                    <button onclick="resetLotteryTime()" class="flex-1 bg-gray-700 text-white border border-white/10 rounded py-2 text-xs font-bold">RESET</button>
+                    <button onclick="window.modLotteryTime(5)" class="flex-1 bg-gray-800 text-green-400 border border-white/10 rounded py-2 text-xs font-bold">+5m</button>
+                    <button onclick="window.modLotteryTime(-5)" class="flex-1 bg-gray-800 text-red-400 border border-white/10 rounded py-2 text-xs font-bold">-5m</button>
+                    <button onclick="window.resetLotteryTime()" class="flex-1 bg-gray-700 text-white border border-white/10 rounded py-2 text-xs font-bold">RESET</button>
                 </div>
-                <button onclick="autoSettleLottery()" class="w-full bg-[#d4af37]/20 text-[#d4af37] border border-[#d4af37]/50 rounded py-2 text-xs font-bold hover:bg-[#d4af37]/40">FORCE DRAW NOW</button>
+                <button onclick="window.autoSettleLottery()" class="w-full bg-[#d4af37]/20 text-[#d4af37] border border-[#d4af37]/50 rounded py-2 text-xs font-bold hover:bg-[#d4af37]/40">FORCE DRAW NOW</button>
                 <div class="flex gap-2 mt-1">
                     <input id="input-jackpot" type="number" class="bg-black border border-white/20 text-white text-xs p-2 w-24 text-center font-num" placeholder="¥ Amount">
-                    <button onclick="setJackpot()" class="flex-1 bg-white/10 text-gray-300 border border-white/20 rounded py-2 text-xs font-bold">SET POOL</button>
+                    <button onclick="window.setJackpot()" class="flex-1 bg-white/10 text-gray-300 border border-white/20 rounded py-2 text-xs font-bold">SET POOL</button>
                 </div>
             </div>
-            <!-- Market Maker -->
             <div class="space-y-3 border-r border-white/10 pr-6">
                 <h3 class="text-[#d4af37] font-bold tracking-[0.2em] text-xs uppercase mb-2"><i class="fa-solid fa-arrow-trend-up mr-2"></i>Stock (35m)</h3>
                 <div class="flex justify-between items-center bg-white/5 p-2 rounded mb-2">
                     <span class="text-xs text-gray-400 font-bold px-2">TIME</span>
                     <div class="flex gap-2">
-                        <button onclick="modStockTime(5)" class="px-2 py-1 bg-gray-800 text-green-400 text-[10px] rounded">+5</button>
-                        <button onclick="modStockTime(-5)" class="px-2 py-1 bg-gray-800 text-red-400 text-[10px] rounded">-5</button>
-                        <!-- Updated Reset Button Logic -->
-                        <button onclick="resetStockTime()" class="px-2 py-1 bg-gray-700 text-white text-[10px] rounded hover:bg-red-900 transition-colors">RESET</button>
+                        <button onclick="window.modStockTime(5)" class="px-2 py-1 bg-gray-800 text-green-400 text-[10px] rounded">+5</button>
+                        <button onclick="window.modStockTime(-5)" class="px-2 py-1 bg-gray-800 text-red-400 text-[10px] rounded">-5</button>
+                        <button onclick="window.resetStockTime()" class="px-2 py-1 bg-gray-700 text-white text-[10px] rounded hover:bg-red-900 transition-colors">RESET</button>
                     </div>
                 </div>
                 <div class="grid grid-cols-2 gap-2">
                     <div class="bg-white/5 p-2 rounded flex justify-between items-center">
                         <span class="text-gray-400 text-[10px] font-bold">002</span>
                         <div class="flex gap-1">
-                            <button onclick="modStock('002', 'w', 1)" class="px-2 bg-green-900/40 text-green-500 rounded font-bold text-[10px] hover:bg-green-600 hover:text-black">W</button>
-                            <button onclick="modStock('002', 'l', 1)" class="px-2 bg-red-900/40 text-red-500 rounded font-bold text-[10px] hover:bg-red-600 hover:text-black">L</button>
+                            <button onclick="window.modStock('002', 'w', 1)" class="px-2 bg-green-900/40 text-green-500 rounded font-bold text-[10px] hover:bg-green-600 hover:text-black">W</button>
+                            <button onclick="window.modStock('002', 'l', 1)" class="px-2 bg-red-900/40 text-red-500 rounded font-bold text-[10px] hover:bg-red-600 hover:text-black">L</button>
                         </div>
                     </div>
                     <div class="bg-white/5 p-2 rounded flex justify-between items-center">
                         <span class="text-gray-400 text-[10px] font-bold">004</span>
                         <div class="flex gap-1">
-                            <button onclick="modStock('004', 'w', 1)" class="px-2 bg-green-900/40 text-green-500 rounded font-bold text-[10px] hover:bg-green-600 hover:text-black">W</button>
-                            <button onclick="modStock('004', 'l', 1)" class="px-2 bg-red-900/40 text-red-500 rounded font-bold text-[10px] hover:bg-red-600 hover:text-black">L</button>
+                            <button onclick="window.modStock('004', 'w', 1)" class="px-2 bg-green-900/40 text-green-500 rounded font-bold text-[10px] hover:bg-green-600 hover:text-black">W</button>
+                            <button onclick="window.modStock('004', 'l', 1)" class="px-2 bg-red-900/40 text-red-500 rounded font-bold text-[10px] hover:bg-red-600 hover:text-black">L</button>
                         </div>
                     </div>
                 </div>
             </div>
-            <!-- System -->
             <div class="space-y-3 flex flex-col justify-between">
                 <div>
                     <h3 class="text-[#d4af37] font-bold tracking-[0.2em] text-xs uppercase mb-2"><i class="fa-solid fa-gear mr-2"></i>System</h3>
-                    <button onclick="editAnno()" class="w-full bg-blue-900/10 hover:bg-blue-900/30 text-blue-400 border border-blue-900/30 rounded py-3 text-xs font-bold mb-2 text-left px-4">
+                    <button onclick="window.editAnno()" class="w-full bg-blue-900/10 hover:bg-blue-900/30 text-blue-400 border border-blue-900/30 rounded py-3 text-xs font-bold mb-2 text-left px-4">
                         <i class="fa-solid fa-bullhorn mr-2"></i> EDIT TICKER
                     </button>
                 </div>
-                <button onclick="logoutAdmin()" class="w-full bg-red-900/20 hover:bg-red-900/40 text-red-400 border border-red-900/50 rounded py-4 text-xs font-bold tracking-widest flex items-center justify-center gap-2">
+                <button onclick="window.logoutAdmin()" class="w-full bg-red-900/20 hover:bg-red-900/40 text-red-400 border border-red-900/50 rounded py-4 text-xs font-bold tracking-widest flex items-center justify-center gap-2">
                     <i class="fa-solid fa-lock"></i> LOCK CONSOLE
                 </button>
             </div>
@@ -472,541 +767,5 @@
     </footer>
     
     <div id="connection-status">INITIALIZING...</div>
-
-    <script>
-        const CONFIG = {
-            adminPass: "8888", // Only for local admin console visibility, not DB security
-            lotteryDuration: 30, // 30m
-            stockDuration: 35,   // 35m
-            DATA_VERSION: "2.3"
-        };
-
-        // --- Default State for initialization ---
-        const DEFAULT_STATE = {
-            version: CONFIG.DATA_VERSION,
-            anno: "初火钱庄交易系统已上线，请各位主帅前往各大站点进行博弈。",
-            jackpot: 5000,
-            lotteryEndTime: Date.now() + CONFIG.lotteryDuration * 60000,
-            stockEndTime: Date.now() + CONFIG.stockDuration * 60000,
-            lotteryState: 'OPEN', 
-            stockState: 'TRADING',
-            stocks: { '002': { w: 0, l: 0 }, '004': { w: 0, l: 0 } },
-            games: [
-                { 
-                    id: 1, 
-                    type: 'PVP', 
-                    name: '重生之变成石头剪刀布大师却因为平局破产这档事', 
-                    cost: '动态', 
-                    location: '待定', 
-                    desc: '1. 基础规则：至少6人参与。每队发6张卡（2石2剪2布）。\n2. 流程：严格进行6轮，卡片必须用完，不可保留。每轮结算后公开弃牌。\n3. 死锁与悬赏：若平局，双方各扣除50道（场地费），本轮奖金（150）不发，直接注入悬赏池。下一轮赢家通吃。\n4. 最终审判：若第6轮依然平局，悬赏池被系统强制回收，无人能得。', 
-                    perfect: '比分 5:1 或 6:0 (抽奖x1)' 
-                },
-                { 
-                    id: 2, 
-                    type: 'PVE', 
-                    name: '关于双峰塔不对等我打算开飞机把双峰塔撞了', 
-                    cost: '200', 
-                    location: '待定', 
-                    desc: '1. 玩法：桌上有两堆硬币（左11，右18）。\n2. 操作：单取（拿走一堆中任意数量）或 双取（两堆同时拿走相同数量）。\n3. 胜利：拿走桌上最后一枚硬币者胜。\n4. 付费玩法：支付200可抢先手或指定先手。', 
-                    perfect: '不买Add-on赢过Committee (抽奖x1)' 
-                },
-                { 
-                    id: 3, 
-                    type: 'PVE', 
-                    name: '关于我转生变成水瓶还要被扔这档事', 
-                    cost: '200', 
-                    location: '待定', 
-                    desc: '1. 玩法：抛水瓶，旋转一圈后稳稳站立。\n2. 胜利：限时1分钟，成功次数多者胜；或竞速模式先成功5次者胜。\n3. Add-on：150道让NPC需成功7次；300道让NPC需连续成功5次。', 
-                    perfect: '不买Add-on赢过Committee (抽奖x1)' 
-                },
-                { 
-                    id: 4, 
-                    type: 'PVP', 
-                    name: '重生之我变成瞎子', 
-                    cost: '动态', 
-                    location: '待定', 
-                    desc: '1. 道具：海绵棒x2，眼罩x2。\n2. 玩法：戴眼罩原地转3圈迷失方向。依靠直觉或队友呼喊攻击。\n3. 判定：击中头部/躯干+1分，对手出界+1分。先得3分者胜。', 
-                    perfect: '3:0 或 3:1 获胜 (抽奖x1)' 
-                },
-                { 
-                    id: 5, 
-                    type: 'SOLO', 
-                    name: '重生之我变成特工007', 
-                    cost: '200', 
-                    location: '待定', 
-                    desc: '1. 玩法：1人挑战。穿越挂满铃铛的红绳阵取物。\n2. 判定：身体触碰铃铛发出声响即失败。\n3. Pay-to-Win：支付200道可剪断一条红绳。', 
-                    perfect: '一次不失误穿过整个阵仗 (抽奖x1)' 
-                },
-                { 
-                    id: 6, 
-                    type: 'PVP', 
-                    name: '重生之我变成初音我婆', 
-                    cost: '动态', 
-                    location: '待定', 
-                    desc: '1. 玩法：轮流抽取积木堆叠。若抽到指令积木（如“单脚站立抽”），必须执行。\n2. 判定：谁弄倒了塔，谁直接判负。\n3. 完胜：成功执行3次指令且塔未倒，或塔高度翻倍。', 
-                    perfect: '执行3次指令且未倒 或 高度翻倍 (抽奖x1)' 
-                },
-                { 
-                    id: 7, 
-                    type: 'PVP', 
-                    name: '重生之我变成人体投篮机这些事', 
-                    cost: '动态', 
-                    location: '待定', 
-                    desc: '1. 核心：4人投球，1人用头接。\n2. 限制：接球者头上绑篮筐，只能动身/头，绝对不可用手碰篮筐。\n3. 判定：限时1分钟，接球多者胜。', 
-                    perfect: '接住10颗球 (抽奖x1)' 
-                },
-                { 
-                    id: 8, 
-                    type: 'PVP', 
-                    name: '重生之我变成拆弹专家', 
-                    cost: '动态', 
-                    location: '待定', 
-                    desc: '1. 配置：指挥官（能看不能动）+ 拆弹员（戴眼罩能动）。\n2. 玩法：指挥官口头指挥拆弹员完成4x4拼图。\n3. 判定：先完成拼图者胜。', 
-                    perfect: '60秒内完成 + 无废话/无肢体接触 (抽奖x1)' 
-                },
-                { 
-                    id: 9, 
-                    type: 'PVP', 
-                    name: '重生之我变成井字棋魂', 
-                    cost: '动态', 
-                    location: '待定', 
-                    desc: '1. 流程：10米折返跑接力下棋。\n2. 前3人：负责“放”标志物。\n3. 第4人起：若未分胜负，跑过去必须“移动”己方一个标志物。\n4. 判定：先连成三点一线者胜。', 
-                    perfect: '前3人直接连成一线 (抽奖x1)' 
-                },
-                { 
-                    id: 10, 
-                    type: 'PVP/E', 
-                    name: '重生之我变成诸葛亮', 
-                    cost: '动态', 
-                    location: '待定', 
-                    desc: '1. 玩法：双方将100兵力分配给A、B、C三城。\n2. 判定：同时亮牌，兵力多者占城（相同平局）。\n3. 获胜：占领2座以上城池。\n4. 死局规则：若1胜1负1平，比较获胜城所耗兵力，兵力少者胜（以少胜多）。', 
-                    perfect: '3:0 完胜 (抽奖x1)' 
-                },
-                { 
-                    id: 11, 
-                    type: 'PVP', 
-                    name: '重生之我变成迪达拉', 
-                    cost: '动态', 
-                    location: '待定', 
-                    desc: '1. 规则：轮流给气球打气，每回合必须按1~5下。\n2. 反转：若敢一次性按超过5下且气球没爆，可反转回合（让对方连按两轮）。\n3. 判定：气球爆炸者负。', 
-                    perfect: '成功执行2次以上“反转”且获胜 (抽奖x1)' 
-                },
-                { 
-                    id: 12, 
-                    type: 'PVP', 
-                    name: '重生之我变成狗', 
-                    cost: '动态', 
-                    location: '待定', 
-                    desc: '1. 配置：7杯水，其中1杯是炸弹（醋/蛇草水）。\n2. 玩法：两队轮流选一杯一口闷。\n3. 判定：喝到炸弹者判负。但若喝完面无表情骗过对方（对方以为是水），则反杀获胜。', 
-                    perfect: '喝炸弹骗过对方 或 首轮选中对方炸弹 (抽奖x1)' 
-                }
-            ]
-        };
-
-        let state = JSON.parse(JSON.stringify(DEFAULT_STATE)); // Deep copy
-        let currentUser = null;
-
-        // --- Init & Auth ---
-        function init() {
-            // Check for custom token provided by Canvas environment
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                window.signInWithCustomToken(window.auth, __initial_auth_token).catch(e => console.error("Auth Error:", e));
-            } else {
-                window.signInAnonymously(window.auth).catch(e => console.error("Auth Error:", e));
-            }
-
-            window.auth.onAuthStateChanged((user) => {
-                const statusEl = document.getElementById('connection-status');
-                if (user) {
-                    currentUser = user;
-                    statusEl.innerText = "ONLINE (ID: " + user.uid.substring(0,4) + ")";
-                    statusEl.classList.remove('offline');
-                    setupRealtimeListener();
-                } else {
-                    currentUser = null;
-                    statusEl.innerText = "OFFLINE";
-                    statusEl.classList.add('offline');
-                }
-            });
-
-            renderAll();
-            startLoop();
-            setupAdminTrigger();
-        }
-
-        // --- Realtime Sync Logic (Replaces loadState) ---
-        function setupRealtimeListener() {
-            if (!currentUser) return;
-            
-            // Use path compatible with user keys or local canvas
-            // If appId is 'default-game-room' (user hosted), we use a simple path
-            // If appId is provided by Canvas, we use the complex path
-            
-            let docRef;
-            if (window.appId === 'default-game-room') {
-                docRef = window.doc(window.db, 'gameData', 'globalState');
-            } else {
-                docRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'gameState');
-            }
-
-            window.onSnapshot(docRef, (docSnap) => {
-                if (docSnap.exists()) {
-                    const remoteState = docSnap.data();
-                    
-                    // Logic to merge remote state
-                    if (remoteState.version !== CONFIG.DATA_VERSION) {
-                         console.warn("Server version mismatch. Admin should reset.");
-                    }
-                    
-                    state = remoteState;
-                    renderAll(); // Re-render UI with new data
-                } else {
-                    // If document doesn't exist yet (first run), create it
-                    console.log("Initializing DB...");
-                    saveState();
-                }
-            }, (error) => {
-                console.error("Sync Error:", error);
-                document.getElementById('connection-status').innerText = "SYNC ERROR";
-            });
-        }
-
-        // --- Save Logic (Replaces localStorage) ---
-        async function saveState() {
-            if (!currentUser) return;
-            
-            let docRef;
-            if (window.appId === 'default-game-room') {
-                docRef = window.doc(window.db, 'gameData', 'globalState');
-            } else {
-                docRef = window.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'gameState');
-            }
-            
-            try {
-                await window.setDoc(docRef, state, { merge: true });
-            } catch (e) {
-                console.error("Save Failed:", e);
-                // Do not alert on every save failure to avoid spamming the user
-            }
-        }
-
-        // --- Rendering Logic (Mostly unchanged) ---
-        function renderAll() {
-            const ticker = document.getElementById('ticker-bar');
-            const annoText = document.getElementById('anno-text');
-            if(!state.anno) ticker.classList.add('hidden');
-            else {
-                ticker.classList.remove('hidden');
-                annoText.innerText = state.anno;
-            }
-
-            document.getElementById('jackpot-display').innerText = state.jackpot.toLocaleString();
-            updateStockUI('002');
-            updateStockUI('004');
-
-            const container = document.getElementById('games-container');
-            if(container) {
-                container.innerHTML = state.games.map(g => `
-                    <div class="glass-card p-5 rounded-lg relative hover:bg-white/5 transition-colors group border border-white/5 hover:border-[#d4af37]/30 cursor-pointer" onclick="openGameDetails(${g.id})">
-                        <div class="flex justify-between items-center mb-4 pointer-events-none">
-                            <span class="text-[10px] font-bold px-2 py-0.5 rounded tracking-wider ${g.type === 'PVP' ? 'badge-pvp' : g.type === 'PVE' ? 'badge-pve' : 'badge-mixed'}">${g.type}</span>
-                            <div class="text-right">
-                                 <span class="text-[#d4af37] font-serif italic text-xl font-bold">Game ${g.id}</span>
-                                 <div class="text-[10px] text-gray-500 flex items-center justify-end gap-1 mt-0.5"><i class="fa-solid fa-location-dot"></i> ${g.location || '待定'}</div>
-                            </div>
-                        </div>
-                        <h3 class="text-white font-bold text-lg mb-1 whitespace-nowrap overflow-hidden text-ellipsis pointer-events-none">${g.name}</h3>
-                        <div class="flex justify-between text-xs text-gray-400 mb-4 pb-3 border-b border-white/10 items-center pointer-events-none">
-                            <span class="uppercase tracking-widest text-[10px]">Entry Fee</span>
-                            <span class="text-white font-num text-lg text-[#d4af37]">${g.cost}</span>
-                        </div>
-                        <p class="text-xs text-gray-400 leading-relaxed mb-4 h-10 overflow-hidden text-ellipsis opacity-80 pointer-events-none">${g.desc}</p>
-                        <div class="bg-gradient-to-r from-[#d4af37]/10 to-transparent p-2 rounded-l border-l-2 border-[#d4af37] pointer-events-none">
-                            <div class="text-[9px] text-[#d4af37] font-bold uppercase mb-0.5 tracking-wider">Perfect Win</div>
-                            <div class="text-xs text-gray-300 leading-tight truncate">${g.perfect}</div>
-                        </div>
-                        <div class="absolute bottom-4 right-4 text-[#d4af37] opacity-0 group-hover:opacity-100 transition text-xs flex items-center gap-1">
-                            查看详情 <i class="fa-solid fa-arrow-right"></i>
-                        </div>
-                        <button onclick="event.stopPropagation(); editGame(${g.id})" class="admin-el absolute top-4 right-4 text-gray-600 hover:text-white bg-black/50 w-6 h-6 rounded-full items-center justify-center z-10"><i class="fa-solid fa-pen text-xs"></i></button>
-                    </div>
-                `).join('');
-            }
-        }
-
-        // === Modal Logic ===
-        function openGameDetails(id) {
-            const g = state.games.find(x => x.id === id);
-            if(!g) return;
-
-            document.getElementById('modal-type').innerText = g.type;
-            document.getElementById('modal-type').className = `inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 border ${g.type === 'PVP' ? 'badge-pvp' : g.type === 'PVE' ? 'badge-pve' : 'badge-mixed'}`;
-            
-            document.getElementById('modal-title').innerText = g.name;
-            document.getElementById('modal-cost').innerText = g.cost;
-            document.getElementById('modal-location').innerText = g.location || '待定';
-            document.getElementById('modal-desc').innerText = g.desc;
-            document.getElementById('modal-perfect').innerText = g.perfect;
-
-            const body = document.getElementById('app-body');
-            body.classList.remove('modal-closed');
-            body.classList.add('modal-open');
-        }
-
-        function closeGameDetails() {
-            const body = document.getElementById('app-body');
-            body.classList.remove('modal-open');
-            body.classList.add('modal-closed');
-        }
-
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') closeGameDetails();
-        });
-
-        document.getElementById('game-modal').addEventListener('click', (e) => {
-            if(e.target.id === 'game-modal') closeGameDetails();
-        });
-
-        function updateStockUI(code) {
-            const s = state.stocks[code];
-            const total = s.w + s.l;
-            const rate = total === 0 ? 0 : Math.round((s.w / total) * 100);
-            
-            const wEl = document.getElementById(`win-${code}`);
-            if(wEl) wEl.innerText = s.w;
-            document.getElementById(`loss-${code}`).innerText = s.l;
-            document.getElementById(`rate-${code}`).innerText = rate + "%";
-
-            const statusText = document.getElementById(`stock-status-text-${code}`);
-            const card = document.getElementById(`stock-${code}-card`);
-            
-            let displayText = "WAITING";
-            let colorClass = "text-gray-600";
-            let borderClass = "";
-
-            if (total < 5) {
-                displayText = "流局 (REFUND)";
-                colorClass = "text-gray-500";
-            } else if (rate >= 80) {
-                displayText = "疯牛 (+200%)";
-                colorClass = "text-green-400 neon-text-gold";
-                borderClass = "neon-border-green";
-            } else if (rate >= 60) {
-                displayText = "牛市 (+150)";
-                colorClass = "text-green-500";
-            } else if (rate >= 40) {
-                displayText = "震荡 (-5%)";
-                colorClass = "text-yellow-500";
-            } else {
-                displayText = "崩盘 (-50%)";
-                colorClass = "text-red-600 neon-text-red";
-                borderClass = "neon-border-red";
-            }
-
-            statusText.innerText = displayText;
-            statusText.className = `text-2xl font-bold tracking-widest ${colorClass}`;
-            
-            card.classList.remove('neon-border-green', 'neon-border-red');
-            if(state.stockState === 'SETTLED' && borderClass) {
-                 card.classList.add(borderClass);
-                 card.classList.add('settle-flash');
-            } else {
-                card.classList.remove('settle-flash');
-            }
-        }
-
-        function startLoop() {
-            setInterval(() => {
-                const now = Date.now();
-                
-                // Lottery
-                let lDiff = state.lotteryEndTime - now;
-                const lStatusEl = document.getElementById('lottery-status-badge');
-                const lTimerEl = document.getElementById('timer-display');
-
-                if (lDiff <= 0) {
-                    if (state.lotteryState !== 'DRAWING') autoSettleLottery(); // Local trigger, but state logic protects recursion
-                    lTimerEl.innerText = "00:00";
-                } else {
-                    const m = Math.floor(lDiff / 60000);
-                    const s = Math.floor((lDiff % 60000) / 1000);
-                    lTimerEl.innerText = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
-                    if (m < 5) {
-                        state.lotteryState = 'FROZEN'; // This is visual only until synced
-                        lStatusEl.innerText = "FROZEN (CLOSED)";
-                        lStatusEl.className = "inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 bg-red-900/30 text-red-400 border border-red-900";
-                    } else {
-                        state.lotteryState = 'OPEN';
-                        lStatusEl.innerText = "OPEN FOR BET";
-                        lStatusEl.className = "inline-block px-3 py-1 rounded text-xs font-bold tracking-widest mb-2 bg-green-900/30 text-green-400 border border-green-900 shadow-[0_0_10px_rgba(34,197,94,0.3)]";
-                    }
-                }
-
-                // Stocks
-                let sDiff = state.stockEndTime - now;
-                const sTimers = document.querySelectorAll('.stock-shared-timer');
-                const sTimerDisplay = document.getElementById('stock-timer-display');
-                if(sTimerDisplay) sTimerDisplay.innerText = formatTime(sDiff);
-                sTimers.forEach(el => el.innerText = formatTime(sDiff));
-
-                if (sDiff <= 0) {
-                    state.stockState = 'SETTLED';
-                    updateStockUI('002');
-                    updateStockUI('004');
-                    sTimers.forEach(el => el.innerText = "SETTLED");
-                } else {
-                    const sm = Math.floor(sDiff / 60000);
-                    if (sm >= 20) state.stockState = 'TRADING';
-                    else state.stockState = 'LOCKED';
-                }
-            }, 1000);
-        }
-
-        function formatTime(ms) {
-            if (ms < 0) return "00:00";
-            const m = Math.floor(ms / 60000);
-            const s = Math.floor((ms % 60000) / 1000);
-            return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
-        }
-
-        const COLORS = ['ball-red', 'ball-green', 'ball-blue'];
-
-        // Modified: Only Admin or timer trigger calls this, but visual is local.
-        // In a real backend, the server would calculate the result.
-        // Here, we trust the client logic (or the Admin's client logic) for visual effects.
-        function autoSettleLottery() {
-            // Only play animation if we haven't seen it recently or state implies it
-            // For simplicity, we just play it.
-            
-            document.getElementById('draw-placeholder').classList.add('hidden');
-            document.getElementById('draw-result').classList.add('hidden');
-            document.getElementById('draw-active').classList.remove('hidden');
-            document.getElementById('draw-active').classList.add('flex');
-            
-            const interval = setInterval(() => {
-                const balls = document.querySelectorAll('#draw-active .mini-ball');
-                balls.forEach(b => {
-                    b.className = `mini-ball ${COLORS[Math.floor(Math.random()*3)]} ball-anim`;
-                });
-            }, 100);
-
-            setTimeout(() => {
-                clearInterval(interval);
-                finalizeLotteryDraw();
-            }, 3000);
-        }
-
-        function finalizeLotteryDraw() {
-            const r1 = COLORS[Math.floor(Math.random()*3)];
-            const r2 = COLORS[Math.floor(Math.random()*3)];
-            const r3 = COLORS[Math.floor(Math.random()*3)];
-
-            document.getElementById('draw-active').classList.add('hidden');
-            document.getElementById('draw-active').classList.remove('flex');
-            document.getElementById('draw-result').classList.remove('hidden');
-            document.getElementById('draw-result').classList.add('flex');
-
-            document.getElementById('r-ball-1').className = `mini-ball ${r1}`;
-            document.getElementById('r-ball-2').className = `mini-ball ${r2}`;
-            document.getElementById('r-ball-3').className = `mini-ball ${r3}`;
-
-            // We only reset logic if we are admin or if data sync triggers it
-            // For pure visual flow:
-            setTimeout(() => {
-                 document.getElementById('draw-result').classList.add('hidden');
-                 document.getElementById('draw-placeholder').classList.remove('hidden');
-            }, 10000);
-        }
-
-        // --- Action Handlers (Now trigger Save) ---
-
-        function modLotteryTime(m) { 
-            state.lotteryEndTime += m * 60000; 
-            saveState(); // Sync to DB
-        }
-        function resetLotteryTime() { 
-            state.lotteryEndTime = Date.now() + CONFIG.lotteryDuration * 60000; 
-            state.lotteryState='OPEN'; 
-            saveState(); 
-        }
-        function modStockTime(m) { 
-            state.stockEndTime += m * 60000; 
-            saveState(); 
-        }
-        
-        function resetStockTime() { 
-            if(confirm('⚠️ 确定重置股票周期吗？\n这将清空所有 002/004 的胜负场数！\n(CONFIRM RESET: Clear Time & Data?)')) {
-                state.stockEndTime = Date.now() + CONFIG.stockDuration * 60000; 
-                state.stockState='TRADING'; 
-                state.stocks = { '002': { w: 0, l: 0 }, '004': { w: 0, l: 0 } };
-                saveState(); 
-                renderAll(); 
-            }
-        }
-
-        function modStock(code, type, val) {
-            state.stocks[code][type] += val;
-            if (state.stocks[code][type] < 0) state.stocks[code][type] = 0;
-            saveState();
-            renderAll();
-        }
-        function setJackpot() {
-            const val = document.getElementById('input-jackpot').value;
-            if(val) { state.jackpot = parseInt(val); saveState(); renderAll(); }
-        }
-        function editAnno() {
-            const n = prompt("公告:", state.anno);
-            if(n !== null) { state.anno = n; saveState(); renderAll(); }
-        }
-        function editGame(id) {
-            const g = state.games.find(x => x.id === id);
-            const cost = prompt("Fee:", g.cost);
-            if(cost) {
-                g.cost = cost;
-                const loc = prompt("Location:", g.location);
-                if(loc) g.location = loc;
-                saveState(); renderAll();
-            }
-        }
-        
-        function setTab(t) {
-            const db = document.getElementById('view-dashboard');
-            const gm = document.getElementById('view-games');
-            const btns = document.querySelectorAll('.tab-btn');
-            
-            btns.forEach(b => b.classList.remove('active'));
-
-            if(t === 'dashboard') {
-                db.classList.remove('view-inactive');
-                db.classList.add('view-active');
-                gm.classList.remove('view-active');
-                gm.classList.add('view-inactive');
-                btns[0].classList.add('active');
-            } else {
-                gm.classList.remove('view-inactive');
-                gm.classList.add('view-active');
-                db.classList.remove('view-active');
-                db.classList.add('view-inactive');
-                btns[1].classList.add('active');
-            }
-        }
-
-        function setupAdminTrigger() {
-            let c = 0;
-            document.getElementById('admin-trigger').addEventListener('click', () => {
-                c++; if(c>=5) { c=0; attemptLogin(); } setTimeout(()=>c=0, 2000);
-            });
-        }
-        function attemptLogin() {
-            if(document.body.classList.contains('is-admin')) return;
-            if(prompt("KEY:") === CONFIG.adminPass) {
-                document.body.classList.add('is-admin');
-                alert("ADMIN ACTIVE\nChanges will now sync to DB.");
-            }
-        }
-        function logoutAdmin() { document.body.classList.remove('is-admin'); }
-
-        init();
-    </script>
 </body>
 </html>
